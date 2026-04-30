@@ -16,10 +16,11 @@ def run(args):
 	import torch
 
 	from bpnetlite.bpnet import ControlWrapper
-	from bpnetlite.performance import calculate_performance_measures
 	from tangermeme.io import extract_loci
 	from tangermeme.predict import predict
 
+	from cherimoya import Cherimoya
+	from cherimoya.performance import calculate_performance_measures
 	from ..defaults import default_evaluate_parameters
 	from ..utils import merge_parameters
 
@@ -32,8 +33,7 @@ def run(args):
 
 	###
 
-	model = torch.load(parameters['model'], weights_only=False).to(
-		parameters['device'])
+	model = Cherimoya.load(parameters['model'], device=parameters['device'])
 
 	examples = extract_loci(
 		sequences=parameters['sequences'],

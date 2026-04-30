@@ -31,6 +31,8 @@ def add_parser(subparsers):
 		help="The filename for the pipeline JSON.")
 	parser.add_argument("-pe", "--paired_end", action='store_true',
 		default=False, help="Whether the input is paired-end.")
+	parser.add_argument("-sf", "--scale_factor", default=1,
+		help="Whether to scale the read counts. 1 is no scaling.")
 	return parser
 
 
@@ -54,6 +56,8 @@ def run(args):
 	parameters['preprocessing_parameters']['fragments'] = args.fragments
 	parameters['preprocessing_parameters']['pos_shift'] = args.pos_shift
 	parameters['preprocessing_parameters']['neg_shift'] = args.neg_shift
+	parameters['preprocessing_parameters']['paired_end'] = args.paired_end
+	parameters['preprocessing_parameters']['scale_factor'] = args.scale_factor
 
 	with open(args.output, 'w') as outfile:
 		outfile.write(json.dumps(parameters, indent=4))

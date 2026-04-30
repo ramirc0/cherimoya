@@ -17,16 +17,16 @@ Model Overview
 
 The model consists of three stages:
 
-1. **Input convolution**: A 1D convolution (kernel size 19) maps the one-hot
+1. **Input convolution**: A 1D convolution (kernel size 21) maps the one-hot
    encoded DNA sequence (4 channels) into a higher-dimensional feature space.
 
 2. **Cheri Blocks**: A stack of blocks with exponentially increasing dilation
    rates (1, 2, 4, 8, ...) that progressively expand the receptive field. The
-   default configuration uses 9 blocks with 64 filters.
+   default configuration uses 9 blocks with 96 filters.
 
-3. **Output heads**: Separate heads for profile prediction (a 1D convolution
-   with kernel size 75) and count prediction (a linear layer over the
-   mean-pooled features).
+3. **Output heads**: Separate heads for profile prediction (a 1×1 pointwise
+   convolution) and count prediction (a linear layer over the mean-pooled
+   features).
 
 
 The Cheri Block
@@ -49,25 +49,29 @@ Each Cheri Block performs the following operations:
    efficiency.
 
 3. **Expansion projection** — a linear layer projects from ``n_filters`` to
-   ``2 × n_filters`` dimensions.
+   ``expansion × n_filters`` dimensions, where ``expansion`` is configurable
+   on both ``CheriBlock`` and ``Cherimoya``. Default is 2.
 
 4. **GELU activation** — the approximate ``tanh``-based variant.
 
-5. **Contraction projection** — projects back to ``n_filters`` dimensions.
+5. **Contraction projection** — projects from ``expansion × n_filters``
+   back to ``n_filters`` dimensions.
 
-6. **Residual connection with learned scaling** — the output is scaled by a
-   learnable per-channel vector ``γ`` (initialized to a small value ``ε``) and
-   added back to the input. This ensures the residual path starts near-identity
-   for training stability.
+6. **Residual connection with fixed scaling** — the MLP output is scaled
+   by a configurable fixed constant (``residual_scale``, default
+   ``0.15``) before being added back to the input. The small constant
+   keeps the residual path near-identity at initialization, which
+   stabilizes training of deep stacks. Both ``CheriBlock`` and
+   ``Cherimoya`` accept ``residual_scale`` as a constructor argument.
 
 In code:
 
 .. code-block:: python
 
    def forward(self, X):
-       X_conv = FusedDilatedConvNormFunc.apply(X, self.conv_weight, self.dilation)
+       X_conv = fused_dilated_conv_norm(X, self.conv_weight, self.dilation)
        X_mlp = self.linear2(self.activation(self.linear1(X_conv)))
-       return X + X_mlp * self.gamma
+       return X + X_mlp * self.residual_scale
 
 
 Custom Triton Kernel
@@ -83,6 +87,18 @@ The kernel is autotuned across:
 - Number of warps: 4, 8, 16
 - Number of pipeline stages: 2, 3, 4, 5
 - Block sizes: 32, 64, 128, 256
+
+CPU and Triton-less fallback
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When a tensor is on the CPU, or when Triton is not installed, the block
+falls back to a pure-PyTorch implementation
+(``cherimoya.cheri._cheri_conv_norm_cpu``) that produces numerically
+equivalent output up to floating-point error. The dispatcher
+(``fused_dilated_conv_norm``) chooses between the two paths automatically
+based on the input device. This means models can be constructed and run
+on machines without a GPU, which is useful for debugging, testing, and
+unit tests.
 
 
 Loss Function Design
@@ -115,8 +131,8 @@ Cherimoya uses a **dual-optimizer** approach:
 
 - **Muon optimizer** for 2D projection weights (the ``linear1`` and ``linear2``
   layers in each Cheri Block)
-- **AdamW optimizer** for all other parameters (convolutions, biases, scaling
-  vectors)
+- **AdamW optimizer** for all other parameters (convolutions, biases,
+  loss-weight scalars)
 
 Both optimizers use a **warmup + cosine decay** learning rate schedule:
 

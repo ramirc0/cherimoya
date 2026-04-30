@@ -14,7 +14,6 @@ AND THE SECOND ARGUMENT MUST BE IN COUNT SPACE FOR THESE FUNCTIONS.
 import torch
 
 from .losses import MNLLLoss
-from .losses import log1pMSELoss
 
 
 def smooth_gaussian1d(x, kernel_sigma, kernel_width):

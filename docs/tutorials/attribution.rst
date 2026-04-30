@@ -61,22 +61,26 @@ Calculating Attributions via Python
    from tangermeme.saturation_mutagenesis import saturation_mutagenesis
    from bpnetlite.bpnet import ControlWrapper, CountWrapper
 
+   from cherimoya import Cherimoya
+
    # Load model
-   model = torch.load("my_model.torch", weights_only=False).cuda()
+   model = Cherimoya.load("my_model.torch", device="cuda")
 
    # Wrap for count-based attribution
    if model.n_control_tracks > 0:
        model = ControlWrapper(model)
    wrapper = CountWrapper(model)
 
-   # Calculate attributions (hypothetical importance scores)
+   # Calculate attributions (hypothetical importance scores) over the
+   # central 400 bp window of each sequence.
+   mid = X_sequences.shape[-1] // 2
    X_attr = saturation_mutagenesis(
        wrapper, X_sequences,
        batch_size=512,
        device='cuda',
        hypothetical=True,
-       start=X_sequences.shape[-1] // 2,
-       end=X_sequences.shape[-1] // 2
+       start=mid - 200,
+       end=mid + 200,
    )
 
 

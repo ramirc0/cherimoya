@@ -39,7 +39,7 @@ def main():
 	pipeline.add_parser(subparsers)
 
 	args = parser.parse_args()
-
+	
 	commands = {
 		'negatives': negatives.run,
 		'pipeline-json': pipeline_json.run,

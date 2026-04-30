@@ -10,13 +10,61 @@ def add_parser(subparsers):
 	return parser
 
 
+def _validate_inputs(parameters):
+	"""Validate the inputs to the pipeline before any expensive work.
+
+	Checks that local files referenced by the JSON exist. Remote files
+	(http://, https://, gs://, s3://) are skipped because resolving them
+	requires network access. Raises FileNotFoundError listing every
+	missing path so users see all problems at once.
+	"""
+
+	import os
+
+	def _is_local(path):
+		return not path.startswith(("http://", "https://", "gs://", "s3://"))
+
+	missing = []
+
+	def _check(path, label):
+		if path is None:
+			return
+		if isinstance(path, (list, tuple)):
+			for p in path:
+				_check(p, label)
+			return
+		if _is_local(path) and not os.path.exists(path):
+			missing.append("{}: {}".format(label, path))
+
+	_check(parameters.get('sequences'), 'sequences')
+	_check(parameters.get('loci'), 'loci')
+	_check(parameters.get('negatives'), 'negatives')
+	_check(parameters.get('signals'), 'signals')
+	_check(parameters.get('controls'), 'controls')
+	_check(parameters.get('motifs'), 'motifs')
+	_check(parameters.get('exclusion_lists'), 'exclusion_lists')
+
+	if missing:
+		raise FileNotFoundError(
+			"Pipeline cannot start; the following inputs are missing:\n  - "
+			+ "\n  - ".join(missing)
+		)
+
+
 def run(args):
-	import sys
+	import argparse
 	import json
+	import os
 	import subprocess
+	import sys
 
 	import pandas
 
+	from . import attribute as attribute_cmd
+	from . import fit as fit_cmd
+	from . import marginalize as marginalize_cmd
+	from . import negatives as negatives_cmd
+	from . import seqlets as seqlets_cmd
 	from ..defaults import (
 		default_fit_parameters,
 		default_attribute_parameters,
@@ -28,9 +76,19 @@ def run(args):
 	from ..utils import _extract_set, _check_set, merge_parameters
 
 	parameters = merge_parameters(args.parameters, default_pipeline_parameters)
-	preprocess_parameters = parameters['preprocessing_parameters']
+	preprocess_parameters = merge_parameters(
+		parameters['preprocessing_parameters'],
+		default_pipeline_parameters['preprocessing_parameters']
+	)
+
+	_validate_inputs(parameters)
 
 	pname = parameters['name']
+
+	def _run_step(cmd_fn, json_path):
+		"""Invoke a CLI step in-process by calling its run(args) directly."""
+		if not parameters['dry_run']:
+			cmd_fn(argparse.Namespace(parameters=json_path))
 
 	###
 	# Step 0.1: Run MACS3 to call peaks if not provided
@@ -78,7 +136,7 @@ def run(args):
 		parameters['loci'] = [pname + '_peaks.narrowPeak']
 
 		if not parameters['dry_run']:
-			subprocess.run(cmd_args)
+			subprocess.run(cmd_args, check=True)
 
 
 	###
@@ -97,8 +155,12 @@ def run(args):
 			"-n", pname,
 			"-ps", str(preprocess_parameters['pos_shift']),
 			"-ns", str(preprocess_parameters['neg_shift']),
+			"-sf", str(preprocess_parameters['scale_factor']),
 			"-p", "-1",
 		]
+
+		if preprocess_parameters['read_depth']:
+			cmd_args += ["-r"]
 
 		if preprocess_parameters["unstranded"]:
 			cmd_args += ["-u"]
@@ -111,7 +173,7 @@ def run(args):
 
 		cmd_args += parameters['signals']
 		if not parameters['dry_run']:
-			subprocess.run(cmd_args)
+			subprocess.run(cmd_args, check=True)
 
 		if preprocess_parameters["unstranded"]:
 			parameters['signals'] = [pname + ".bw"]
@@ -130,6 +192,9 @@ def run(args):
 				"-p", "-1"
 			]
 
+			if preprocess_parameters['read_depth']:
+				cmd_args += ["-r"]
+
 			if preprocess_parameters["unstranded"]:
 				cmd_args += ["-u"]
 
@@ -141,7 +206,7 @@ def run(args):
 
 			cmd_args += parameters['controls']
 			if not parameters['dry_run']:
-				subprocess.run(cmd_args)
+				subprocess.run(cmd_args, check=True)
 
 			if preprocess_parameters["unstranded"]:
 				parameters['controls'] = [pname + ".control.bw"]
@@ -157,20 +222,23 @@ def run(args):
 		if preprocess_parameters['verbose']:
 			print("\nStep 0.3: Find GC-matched negative regions.")
 
-		cmd_args = [
-			"cherimoya", "negatives",
-			"-i", parameters["loci"][0],
-			"-f", parameters["sequences"],
-			"-o", pname + ".negatives.bed"
-		]
-
-		if preprocess_parameters['verbose']:
-			cmd_args += ['-v']
+		negatives_args = argparse.Namespace(
+			peaks=parameters["loci"][0],
+			fasta=parameters["sequences"],
+			bigwig=None,
+			output=pname + ".negatives.bed",
+			bin_width=0.02,
+			max_n_perc=0.1,
+			beta=0.5,
+			in_window=parameters['in_window'],
+			out_window=parameters['out_window'],
+			verbose=preprocess_parameters['verbose'],
+		)
 
 		parameters["negatives"] = [pname + ".negatives.bed"]
 
 		if not parameters['dry_run']:
-			subprocess.run(cmd_args)
+			negatives_cmd.run(negatives_args)
 
 
 	###
@@ -191,8 +259,7 @@ def run(args):
 		with open(name, 'w') as outfile:
 			outfile.write(json.dumps(fit_parameters, sort_keys=True, indent=4))
 
-		if not parameters['dry_run']:
-			subprocess.run(["cherimoya", "fit", "-p", name], check=True)
+		_run_step(fit_cmd.run, name)
 
 
 	###
@@ -212,8 +279,7 @@ def run(args):
 	with open(name, 'w') as outfile:
 		outfile.write(json.dumps(attribute_parameters, sort_keys=True, indent=4))
 
-	if not parameters['dry_run']:
-		subprocess.run(["cherimoya", "attribute", "-p", name], check=True)
+	_run_step(attribute_cmd.run, name)
 
 
 	###
@@ -235,8 +301,7 @@ def run(args):
 	with open(name, 'w') as outfile:
 		outfile.write(json.dumps(seqlet_parameters, sort_keys=True, indent=4))
 
-	if not parameters['dry_run']:
-		subprocess.run(["cherimoya", "seqlets", "-p", name], check=True)
+	_run_step(seqlets_cmd.run, name)
 
 
 	###
@@ -366,5 +431,4 @@ def run(args):
 		outfile.write(json.dumps(marginalize_parameters, sort_keys=True,
 			indent=4))
 
-	if not parameters['dry_run']:
-		subprocess.run(["cherimoya", "marginalize", "-p", name], check=True)
+	_run_step(marginalize_cmd.run, name)

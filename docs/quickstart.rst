@@ -54,7 +54,7 @@ For more control, use the Python API directly.
    from cherimoya import Cherimoya
 
    model = Cherimoya(
-       n_filters=64,       # Number of convolutional filters
+       n_filters=96,       # Number of convolutional filters (default 96)
        n_layers=9,         # Number of Cheri Blocks
        n_outputs=2,        # Number of output tracks (e.g., 2 for stranded)
        n_control_tracks=0, # Number of control tracks (0 if no controls)

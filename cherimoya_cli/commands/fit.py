@@ -10,11 +10,11 @@ def add_parser(subparsers):
 
 
 def run(args):
+	import argparse
 	import copy
 	import os
 	import sys
 	import json
-	import subprocess
 
 	os.environ['TORCH_CUDNN_V8_API_ENABLED'] = '1'
 
@@ -22,7 +22,7 @@ def run(args):
 	torch.backends.cudnn.benchmark = True
 	torch.set_float32_matmul_precision('high')
 
-	from torch.optim import AdamW, Muon
+	from torch.optim import Muon
 	from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 
 	from cherimoya import Cherimoya
@@ -30,6 +30,7 @@ def run(args):
 
 	from tangermeme.io import extract_loci
 
+	from . import evaluate as evaluate_cmd
 	from ..defaults import default_fit_parameters
 	from ..utils import merge_parameters
 
@@ -68,6 +69,7 @@ def run(args):
 		exclusion_lists=parameters['exclusion_lists'],
 		random_state=parameters['random_state'],
 		batch_size=parameters['batch_size'],
+		num_workers=parameters['num_workers'],
 		verbose=parameters['verbose']
 	)
 
@@ -112,6 +114,8 @@ def run(args):
 		n_layers=parameters['n_layers'],
 		n_outputs=len(parameters['signals']),
 		n_control_tracks=n_control_tracks,
+		expansion=parameters['expansion'],
+		residual_scale=parameters['residual_scale'],
 		single_count_output=parameters['single_count_output'],
 		trimming=trimming,
 		name=parameters['name'],
@@ -126,9 +130,10 @@ def run(args):
 			sum(p.numel() for p in model.parameters() if p.requires_grad))
 		)
 
-
 	num_warmup_epochs = 5
-	num_iters = len(training_data) * num_warmup_epochs
+	max_epochs = parameters['max_epochs']
+	num_warmup_iters = len(training_data) * num_warmup_epochs
+	num_decay_iters = len(training_data) * max(1, max_epochs - num_warmup_epochs)
 
 	muon_params = []
 	adam_params = []
@@ -138,22 +143,35 @@ def run(args):
 		else:
 			adam_params.append(p)
 
-	muon_optimizer = Muon(muon_params, lr=0.01, weight_decay=0.0)
-	muon_warmup_scheduler = LinearLR(muon_optimizer, start_factor=0.01, total_iters=num_iters)
-	muon_decay_scheduler = CosineAnnealingLR(muon_optimizer, T_max=len(training_data)*50, eta_min=1e-5)
+	muon_optimizer = Muon(
+		muon_params,
+		lr=parameters['muon_lr'],
+		weight_decay=parameters['muon_wd']
+	)
+
+	muon_warmup_scheduler = LinearLR(muon_optimizer, start_factor=0.01,
+		total_iters=num_warmup_iters)
+	muon_decay_scheduler = CosineAnnealingLR(muon_optimizer,
+		T_max=num_decay_iters, eta_min=1e-5)
 	muon_scheduler = SequentialLR(
 		muon_optimizer,
 		schedulers=[muon_warmup_scheduler, muon_decay_scheduler],
-		milestones=[num_iters]
+		milestones=[num_warmup_iters]
 	)
 
-	adam_optimizer = torch.optim.AdamW(adam_params, lr=0.004, weight_decay=0.0)
-	adam_warmup_scheduler = LinearLR(adam_optimizer, start_factor=0.01, total_iters=num_iters)
-	adam_decay_scheduler = CosineAnnealingLR(adam_optimizer, T_max=len(training_data)*50, eta_min=1e-5)
+	adam_optimizer = torch.optim.AdamW(
+		adam_params,
+		lr=parameters['adam_lr'],
+		weight_decay=parameters['adam_wd']
+	)
+	adam_warmup_scheduler = LinearLR(adam_optimizer, start_factor=0.01,
+		total_iters=num_warmup_iters)
+	adam_decay_scheduler = CosineAnnealingLR(adam_optimizer,
+		T_max=num_decay_iters, eta_min=1e-5)
 	adam_scheduler = SequentialLR(
 		adam_optimizer,
 		schedulers=[adam_warmup_scheduler, adam_decay_scheduler],
-		milestones=[num_iters]
+		milestones=[num_warmup_iters]
 	)
 
 	model.fit(training_data,
@@ -162,7 +180,7 @@ def run(args):
 		X_valid=valid_sequences,
 		X_ctl_valid=valid_controls,
 		y_valid=valid_signals,
-		max_epochs=parameters['max_epochs'],
+		max_epochs=max_epochs,
 		batch_size=parameters['batch_size'],
 		early_stopping=parameters['early_stopping'],
 		dtype=parameters['dtype'],
@@ -170,17 +188,18 @@ def run(args):
 
 	### Evaluate Model
 
+	model_name = parameters['name'] or model.name
+
 	evaluate_parameters = copy.deepcopy(parameters)
 	evaluate_parameters['chroms'] = parameters['validation_chroms']
 	evaluate_parameters['max_jitter'] = 0
 	evaluate_parameters['reverse_complement'] = False
-	evaluate_parameters['model'] = parameters['name'] + '.torch'
-	evaluate_parameters['performance_filename'] = (parameters['name'] +
-		'.performance.tsv')
+	evaluate_parameters['model'] = model_name + '.torch'
+	evaluate_parameters['performance_filename'] = model_name + '.performance.tsv'
 
 
-	fname = "{}.evaluate.json".format(parameters['name'])
+	fname = "{}.evaluate.json".format(model_name)
 	with open(fname, "w") as outfile:
 		outfile.write(json.dumps(evaluate_parameters, sort_keys=True, indent=4))
 
-	subprocess.run(["cherimoya", "evaluate", "-p", fname], check=True)
+	evaluate_cmd.run(argparse.Namespace(parameters=fname))

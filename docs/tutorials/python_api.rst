@@ -15,10 +15,12 @@ A Cherimoya model is a standard ``torch.nn.Module``:
    from cherimoya import Cherimoya
 
    model = Cherimoya(
-       n_filters=64,           # Width of the convolutional backbone
+       n_filters=96,           # Width of the convolutional backbone (default 96)
        n_layers=9,             # Number of Cheri Blocks (dilation: 1, 2, ..., 256)
        n_outputs=2,            # Output tracks (2 for stranded data)
        n_control_tracks=0,     # Control input tracks (0 if no controls)
+       expansion=2,            # MLP expansion factor inside each Cheri Block (default 2)
+       residual_scale=0.15,    # Fixed scalar on each residual connection (default 0.15)
        single_count_output=True,  # Single scalar count vs. per-track counts
        name="my_model",        # Model name (used for save filenames)
    ).cuda()
@@ -74,12 +76,33 @@ The :func:`~cherimoya.io.PeakGenerator` function handles all data I/O:
        negative_ratio=0.1,              # Ratio of negatives to peaks
        reverse_complement=True,          # Augment with reverse complements
        batch_size=64,
+       num_workers=1,                    # Async prefetch workers
+       random_state=0,                   # Sampler seed (reproducible)
    )
 
 .. tip::
 
    Use ``verbose=True`` to see progress bars during data loading and summary
    statistics about the number of peaks, negatives, and filtered regions.
+
+
+Sampling Strategy
+^^^^^^^^^^^^^^^^^
+
+The underlying :class:`~cherimoya.io.PeakNegativeSampler` is fully
+deterministic given ``random_state``. ``__getitem__(idx)`` is a pure
+function of ``idx`` and the current epoch, with no dependence on call
+history. As a consequence:
+
+- Each epoch yields exactly ``n_peaks + int(n_peaks * negative_ratio)``
+  examples; every peak appears exactly once and the peak/negative
+  interleaving is random but reproducible.
+- Setting ``num_workers > 1`` produces the **same** sequence of batches
+  as ``num_workers = 1`` — just faster. All workers compute the same
+  data for any given index.
+- Per-position augmentations (jitter, reverse-complement) are also
+  drawn from the per-epoch RNG, so two runs with the same seed produce
+  bit-identical training data.
 
 
 Preparing Validation Data
@@ -172,6 +195,41 @@ During training, the model saves:
 - ``my_model.torch`` — best model checkpoint
 - ``my_model.final.torch`` — final model after training
 - ``my_model.log`` — training/validation metrics log
+
+
+Saving and Loading Models
+-------------------------
+
+Cherimoya checkpoints store the constructor arguments next to the parameter
+state dict. This makes loading robust to package layout changes and lets the
+checkpoint be loaded with PyTorch's ``weights_only=True`` setting.
+
+**Saving**:
+
+.. code-block:: python
+
+   from cherimoya import Cherimoya
+
+   model = Cherimoya(n_filters=96, n_layers=9, n_outputs=2)
+   # ... train ...
+   model.save("my_model.torch")
+
+**Loading**:
+
+.. code-block:: python
+
+   from cherimoya import Cherimoya
+
+   # Load to CPU (default) — fine for inspection or CPU-only inference.
+   model = Cherimoya.load("my_model.torch")
+
+   # Load directly onto GPU.
+   model = Cherimoya.load("my_model.torch", device="cuda")
+
+The checkpoint is a dictionary with two keys, ``config`` (the kwargs
+passed to ``Cherimoya.__init__``) and ``state_dict`` (the parameter
+tensors). Older checkpoints saved with ``torch.save(model, ...)`` are not
+compatible with this loader and should be retrained or migrated.
 
 
 Making Predictions

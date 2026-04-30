@@ -12,7 +12,7 @@ Cherimoya is a lightweight genomic sequence-to-function (S2F) model for predicti
 
 <img src="https://github.com/jmschrei/cherimoya/blob/main/imgs/cheri-model.png">
 
-The secret to Cherimoya's success is a new Cheri Block, which adapts the ConvNeXT block to the domain of noisy high-throughput genomics experiments. This block is comprised of a dilated depth-wise convolution, a layer norm, a projection into a higher-dimensional space, a GeLU non-linearity, a projection back into the original dimensionality, and then a channel-wise scaling for robustness. Conceptually, this means that the blocks first aggregate information spatially but independently for each feature/channel (the depth-wise convolution) and then aggregate information across features but independently for each position (the two projections). The dilated depth-wise convolution and the layer norm have been fused into an efficient custom GPU kernel that is ~2-3x faster than the native PyTorch implementation.
+The secret to Cherimoya's success is a new Cheri Block, which adapts the ConvNeXT block to the domain of noisy high-throughput genomics experiments. This block is comprised of a dilated depth-wise convolution, a layer norm, a projection into a higher-dimensional space, a GeLU non-linearity, a projection back into the original dimensionality, and a residual connection scaled by a small fixed constant. Conceptually, this means that the blocks first aggregate information spatially but independently for each feature/channel (the depth-wise convolution) and then aggregate information across features but independently for each position (the two projections). The dilated depth-wise convolution and the layer norm have been fused into an efficient custom GPU kernel that is ~2-3x faster than the native PyTorch implementation.
 
 <img src="https://github.com/jmschrei/cherimoya/blob/main/imgs/cheri-block.png">
 
@@ -40,7 +40,7 @@ pip install -e .    # or: uv pip install -e .
 
 *Lightweight Architecture*: Cherimoya employs a compact convolutional backbone that substantially reduces parameter count while also slightly increasing predictive accuracy. This design enables efficient training, large-scale hyperparameter exploration, interactive usage via browsers, and usage of dozens or hundreds of such models simultaneously in complex design settings.
 
-*Stable training*: Several design choices were made to improve the stability of model training, including the use of layer norm in each layer, a channel-wise scaling on each residual layer that begins at 0.01 (close to the identity mapping), a cosine decay learning rate scheduler with a long warmup (5 epochs by default), removing all bias terms in the Cheri blocks, and, somewhat counterintuitively, removing weight decay from the optimizers.
+*Stable training*: Several design choices were made to improve the stability of model training, including the use of layer norm in each layer, a small fixed scalar on each residual connection (configurable via the `residual_scale` argument on both `CheriBlock` and `Cherimoya`, default 0.15) that keeps the path close to the identity mapping at initialization, a cosine decay learning rate scheduler with a long warmup (5 epochs by default), removing all bias terms in the Cheri blocks, and, somewhat counterintuitively, removing weight decay from the optimizers.
 
 *Automatic Loss Weight Balancing*: Profile and count losses are combined using learned weighting parameters rather than fixed hyperparameters. This approach replaces the heuristic developed for BPNet and ChromBPNet models and enables the models to scale to larger contexts and across modalities automatically, while also improving gradient stability across datasets with varying signal-to-noise characteristics.
 
@@ -50,6 +50,28 @@ pip install -e .    # or: uv pip install -e .
 
 *Mixed Precision*: When data is of reasonable depth, Cherimoya models are best trained using mixed precision, which can offer a ~2x speed improvement (sometimes more when also compiling the model). However, using mixed precision can hurt performance when the data is very low quality or low read depth, such as for TF ChIP-seq experiments or pseudobulks for rare cell types. We recommend using `float32` precision for BPNet-style models as a starting point unless you have particularly high-quality data.
 
+*Deterministic Sampling*: The peak/negative sampler in `PeakGenerator` is a pure function of `(random_state, epoch, idx)`, so every peak appears exactly once per epoch and two runs with the same seed produce bit-identical training data. `num_workers > 1` is purely a speed optimization — it produces the **same** sequence of batches as `num_workers = 1`, just faster.
+
+
+### Saving and Loading Models
+
+Models are saved as a dictionary containing the constructor arguments and a state dict, rather than a pickled module. This format is robust to source-layout changes and is safe to load with PyTorch's `weights_only=True` setting:
+
+```python
+from cherimoya import Cherimoya
+
+model = Cherimoya(n_filters=96, n_layers=9, n_outputs=2)
+# ... train ...
+model.save("my_model.torch")
+
+# Load on CPU (default)
+model = Cherimoya.load("my_model.torch")
+
+# Or load directly onto a GPU
+model = Cherimoya.load("my_model.torch", device="cuda")
+```
+
+The CLI commands (`evaluate`, `attribute`, `marginalize`) and `model.fit()` use this format internally. Older checkpoints saved with `torch.save(model, ...)` are not compatible with `Cherimoya.load` and should be retrained.
 
 ### End-to-End Pipeline
 

@@ -22,6 +22,7 @@ def run(args):
 	from tangermeme.io import extract_loci
 	from tangermeme.saturation_mutagenesis import saturation_mutagenesis
 
+	from cherimoya import Cherimoya
 	from ..defaults import default_attribute_parameters
 	from ..utils import merge_parameters
 
@@ -31,8 +32,7 @@ def run(args):
 
 	###
 
-	model = torch.load(parameters['model'], weights_only=False).to(
-		parameters['device'])
+	model = Cherimoya.load(parameters['model'], device=parameters['device'])
 
 	X, idxs = extract_loci(
 		sequences=parameters['sequences'],

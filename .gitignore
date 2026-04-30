@@ -17,6 +17,9 @@ MANIFEST
 # Jupyter Notebooks
 .ipynb_checkpoints
 
+# Sphinx build output
+docs/_build/
+
 # Cherimoya specific
 *.torch
 *.final.torch

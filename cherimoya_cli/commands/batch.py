@@ -3,7 +3,7 @@
 
 
 def add_parser(subparsers):
-	parser = subparsers.add_parser("batch", help="Fit several models.")
+	parser = subparsers.add_parser("batch", help="Run the pipeline in parallel using multiple GPUs.")
 	parser.add_argument("-p", "--parameters", type=str, required=True,
 		help="A JSON file containing the parameters for fitting the model.")
 	return parser
