@@ -178,7 +178,7 @@ def run(args):
 		print("Muon Optimizer: lr={}, wd={}".format(parameters['muon_lr'], 
 													parameters['muon_wd']))
 		print("AdamW Optimizer: lr={}, wd={}\n".format(parameters['adam_lr'],
-													 parameters['adam_wd'])
+													 parameters['adam_wd']))
 		  
 	###
 
