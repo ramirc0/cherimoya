@@ -80,7 +80,10 @@ def _cheri_conv_norm_cpu(x, w, dilation, eps=CONV_NORM_EPS):
 
 
 if HAS_TRITON:
-
+	###
+	# FWD-BWD KERNELS FOR TRAINING AND GRADIENTS
+	###
+	
 	def _autotune_configs():
 		num_warps = [4, 8, 16]
 		num_stages = [2, 3, 4, 5]
@@ -439,6 +442,10 @@ if HAS_TRITON:
 
 			dw = dw.view(N * NUM_CHUNKS, 3, C).sum(dim=0)
 			return dx.to(x.dtype), dw.to(x.dtype), None
+
+		###
+		# FWD-ONLY KERNELS FOR INFERENCE, E.G., SATURATION MUTAGENESIS
+		###
 
 
 def fused_dilated_conv_norm(x, w, dilation):

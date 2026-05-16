@@ -170,3 +170,174 @@ def test_load_to_specified_device(tmp_path, small_model_kwargs, device):
 	# Check at least one parameter ended up on the requested device.
 	param = next(loaded.parameters())
 	assert param.device.type == device
+
+
+# --------- Inference fast-path invariants ---------------------------------
+#
+# These tests guard against silent regressions when a separate inference
+# kernel is dispatched under `torch.no_grad()`. Existing trained-model
+# checkpoints must continue to produce the same predictions, so the
+# tolerance budget here is tight on fp32.
+
+def test_model_no_grad_matches_grad_cpu(small_model_kwargs):
+	"""On CPU the model takes the same code path regardless of grad
+	state — verify that explicitly so the merge of an inference-only
+	kernel doesn't accidentally divert CPU through a different
+	branch."""
+
+	model = Cherimoya(**small_model_kwargs).eval()
+	L = _input_window_for(model)
+	X = torch.randn(2, 4, L)
+
+	y_profile_grad, y_counts_grad = model(X)
+	with torch.no_grad():
+		y_profile_ng, y_counts_ng = model(X)
+
+	assert torch.allclose(y_profile_grad.detach(), y_profile_ng,
+		atol=1e-6, rtol=1e-5)
+	assert torch.allclose(y_counts_grad.detach(), y_counts_ng,
+		atol=1e-6, rtol=1e-5)
+
+
+def test_model_save_load_predictions_match_under_no_grad(tmp_path,
+	small_model_kwargs):
+	"""The inference-time entry point is: load a saved model, set
+	`.eval()`, run forward under `torch.no_grad()`. This is exactly the
+	combination a separate inference kernel would dispatch under, so the
+	round-trip must produce the same predictions as a grad-enabled
+	forward on the unloaded model. Tight tolerance is required because
+	users rely on saved checkpoints being numerically stable."""
+
+	model = Cherimoya(**small_model_kwargs).eval()
+	L = _input_window_for(model)
+	X = torch.randn(1, 4, L)
+
+	expected_profile, expected_counts = model(X)
+
+	path = tmp_path / "model.torch"
+	model.save(str(path))
+	loaded = Cherimoya.load(str(path)).eval()
+
+	with torch.no_grad():
+		got_profile, got_counts = loaded(X)
+
+	assert torch.allclose(expected_profile, got_profile, atol=1e-6)
+	assert torch.allclose(expected_counts, got_counts, atol=1e-6)
+
+
+def test_model_no_grad_matches_grad_with_controls():
+	"""Same parity check, exercising the control-tracks branch of the
+	forward where the inference path's residual layout could in
+	principle differ."""
+
+	model = Cherimoya(n_filters=8, n_layers=2, n_outputs=1,
+		n_control_tracks=2, single_count_output=True, verbose=False).eval()
+	L = _input_window_for(model)
+	X = torch.randn(1, 4, L)
+	# Counts head takes log(sum(X_ctl)+1); use non-negative controls so
+	# that the comparison values are finite.
+	X_ctl = torch.rand(1, 2, L)
+
+	y_profile_grad, y_counts_grad = model(X, X_ctl)
+	with torch.no_grad():
+		y_profile_ng, y_counts_ng = model(X, X_ctl)
+
+	assert torch.allclose(y_profile_grad.detach(), y_profile_ng,
+		atol=1e-6, rtol=1e-5)
+	assert torch.allclose(y_counts_grad.detach(), y_counts_ng,
+		atol=1e-6, rtol=1e-5)
+
+
+def test_model_small_n_filters_works_under_no_grad():
+	"""With n_filters=8 and expansion=1, the per-block hidden width is 8
+	— below the multiple-of-16 constraint that a fused inference kernel
+	may impose. Such configurations must transparently fall back."""
+
+	model = Cherimoya(n_filters=8, n_layers=2, expansion=1, n_outputs=1,
+		n_control_tracks=0, single_count_output=True, verbose=False).eval()
+	L = _input_window_for(model)
+	X = torch.randn(1, 4, L)
+
+	with torch.no_grad():
+		y_profile, y_counts = model(X)
+
+	assert y_profile.shape == (1, 1, L - 2 * model.trimming)
+	assert y_counts.shape == (1, 1)
+	assert torch.isfinite(y_profile).all()
+	assert torch.isfinite(y_counts).all()
+
+
+@pytest.mark.cuda
+@pytest.mark.triton
+def test_model_no_grad_matches_grad_cuda():
+	"""GPU parity at the model level. The inference path of an
+	individual CheriBlock is correctness-checked in test_cheri.py; this
+	test validates that stacking multiple blocks plus the head layers
+	does not compound errors past the 1e-4 budget for fp32 inputs."""
+
+	model = Cherimoya(n_filters=32, n_layers=3, n_outputs=1,
+		n_control_tracks=0, single_count_output=True,
+		verbose=False).cuda().eval()
+	L = _input_window_for(model)
+	X = torch.randn(2, 4, L, device='cuda')
+
+	y_profile_grad, y_counts_grad = model(X)
+	with torch.no_grad():
+		y_profile_ng, y_counts_ng = model(X)
+
+	prof_diff = (y_profile_grad - y_profile_ng).abs().max().item()
+	count_diff = (y_counts_grad - y_counts_ng).abs().max().item()
+	assert prof_diff <= 1e-4, f"profile diverged: max-abs-diff={prof_diff}"
+	assert count_diff <= 1e-4, f"counts diverged: max-abs-diff={count_diff}"
+
+
+@pytest.mark.cuda
+@pytest.mark.triton
+def test_model_save_load_no_grad_matches_grad_cuda(tmp_path):
+	"""The full inference workflow on GPU: build, save, reload, eval,
+	predict under no_grad. Must match the grad-enabled forward of the
+	original (unloaded) model within tight tolerance — this is the
+	contract trained checkpoints depend on."""
+
+	model = Cherimoya(n_filters=32, n_layers=3, n_outputs=1,
+		n_control_tracks=0, single_count_output=True,
+		verbose=False).cuda().eval()
+	L = _input_window_for(model)
+	X = torch.randn(1, 4, L, device='cuda')
+
+	expected_profile, expected_counts = model(X)
+
+	path = tmp_path / "model.torch"
+	model.save(str(path))
+	loaded = Cherimoya.load(str(path), device='cuda').eval()
+
+	with torch.no_grad():
+		got_profile, got_counts = loaded(X)
+
+	prof_diff = (expected_profile - got_profile).abs().max().item()
+	count_diff = (expected_counts - got_counts).abs().max().item()
+	assert prof_diff <= 1e-4, f"profile diverged after save/load: {prof_diff}"
+	assert count_diff <= 1e-4, f"counts diverged after save/load: {count_diff}"
+
+
+@pytest.mark.cuda
+@pytest.mark.triton
+def test_model_no_grad_stable_across_repeated_calls_cuda():
+	"""A weight cache keyed only on Parameter identity could silently
+	stale-hit if the model is reused across many inference passes
+	(e.g., in saturation mutagenesis loops). Verify deterministic output
+	across repeated no_grad forwards on the same input."""
+
+	model = Cherimoya(n_filters=32, n_layers=2, verbose=False).cuda().eval()
+	L = _input_window_for(model)
+	X = torch.randn(1, 4, L, device='cuda')
+
+	with torch.no_grad():
+		p1, c1 = model(X)
+		p2, c2 = model(X)
+		p3, c3 = model(X.clone())
+
+	assert torch.equal(p1, p2)
+	assert torch.equal(c1, c2)
+	assert torch.equal(p1, p3)
+	assert torch.equal(c1, c3)
