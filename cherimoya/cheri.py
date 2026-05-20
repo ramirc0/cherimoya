@@ -864,16 +864,6 @@ class CheriBlock(torch.nn.Module):
 		torch.nn.init.trunc_normal_(self.linear1.weight, std=0.02)
 		torch.nn.init.trunc_normal_(self.linear2.weight, std=0.02)
 
-		# Inference-path weight cache. Plain dict (not a buffer, not in
-		# state_dict). Keyed by target dot dtype; the value is a tuple
-		# (cache_key, w1_cast, w2_cast_with_scale). The cache_key
-		# combines (id, _version) of both Linear weights, so the cache
-		# invalidates automatically after load_state_dict (in-place
-		# data.copy_ bumps _version) or any in-place optimizer update.
-		# residual_scale is treated as immutable and is folded into
-		# w2 at cast time.
-		self._w_cache = {}
-
 	def _can_use_inference_path(self, X):
 		"""Return True iff the no_grad fused inference kernel can be used
 		for this input. Requires CUDA + Triton, gradients to be disabled,
@@ -889,9 +879,9 @@ class CheriBlock(torch.nn.Module):
 
 	def _cast_weights(self, X):
 		"""Cast the MLP weights to the dot dtype and fold residual_scale
-		into the second weight, caching the result. The cache key
-		combines parameter identity and `_version` so any in-place
-		update (load_state_dict, optimizer step) invalidates it.
+		into the second weight. Recomputed on every call (no caching) so
+		that the returned tensors are produced inside the current forward
+		and do not alias memory across torch.compile + cudagraph replays.
 
 		For fp32 input we downcast to bf16: roughly 2x dot throughput on
 		Hopper at the cost of ~1e-2 max-abs precision loss vs the
@@ -899,14 +889,8 @@ class CheriBlock(torch.nn.Module):
 		first line below to `dt = X.dtype` unconditionally."""
 
 		dt = torch.bfloat16 if X.dtype == torch.float32 else X.dtype
-		w1_p, w2_p = self.linear1.weight, self.linear2.weight
-		key = (id(w1_p), w1_p._version, id(w2_p), w2_p._version)
-		entry = self._w_cache.get(dt)
-		if entry is not None and entry[0] == key:
-			return entry[1], entry[2]
-		w1 = w1_p.to(dt)
-		w2 = (w2_p * self.residual_scale).to(dt)
-		self._w_cache[dt] = (key, w1, w2)
+		w1 = self.linear1.weight.to(dt)
+		w2 = (self.linear2.weight * self.residual_scale).to(dt)
 		return w1, w2
 
 	def forward(self, X):
