@@ -519,9 +519,6 @@ class Cherimoya(torch.nn.Module):
 				valid_profile_loss, valid_count_loss = _mixture_loss(y_valid,
 					y_hat_logits, y_hat_logcounts)
 
-				valid_loss = ((w0 * valid_profile_loss).sum()
-					+ (w1 * valid_count_loss).sum())
-
 				measures = calculate_performance_measures(y_hat_logits,
 					y_valid, y_hat_logcounts, measures=['profile_pearson', 'count_pearson'])
 
