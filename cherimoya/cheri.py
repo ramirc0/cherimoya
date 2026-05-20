@@ -864,15 +864,21 @@ class CheriBlock(torch.nn.Module):
 		torch.nn.init.trunc_normal_(self.linear1.weight, std=0.02)
 		torch.nn.init.trunc_normal_(self.linear2.weight, std=0.02)
 
-		# bf16 casts of the MLP weights, materialized at .eval() time and
-		# cleared at .train() time. Non-persistent buffers so they move
-		# with .to(device) but stay out of state_dict. None when in train
-		# mode; populated tensors when in eval mode. The inference
-		# megakernel reads these as stable inputs (they live outside the
-		# compiled region), avoiding the cudagraph cache-overwrite
-		# pattern that an in-graph cache would trigger.
+		# Eval-time weight caches, materialized at .eval() time and cleared
+		# at .train() time. Non-persistent buffers so they move with
+		# .to(device) but stay out of state_dict. The inference megakernel
+		# reads these as stable inputs (they live outside the compiled
+		# region), avoiding the cudagraph cache-overwrite pattern that an
+		# in-graph cache would trigger.
+		#   _w1_eval_bf16, _w2_eval_bf16: bf16 casts, used when X is fp32
+		#       (megakernel downcasts the MLP dot to bf16 for fp32 input).
+		#   _w2_eval_native: linear2.weight * residual_scale at the param's
+		#       native dtype, used when X.dtype matches the parameters
+		#       (X stays in the native dtype through the MLP). Avoids the
+		#       per-call multiply that the inline cast would otherwise do.
 		self.register_buffer('_w1_eval_bf16', None, persistent=False)
 		self.register_buffer('_w2_eval_bf16', None, persistent=False)
+		self.register_buffer('_w2_eval_native', None, persistent=False)
 
 		# Refresh the eval cache after this block's parameters are
 		# loaded directly via load_state_dict (standalone CheriBlock
@@ -897,12 +903,13 @@ class CheriBlock(torch.nn.Module):
 		if mode:
 			self._w1_eval_bf16 = None
 			self._w2_eval_bf16 = None
+			self._w2_eval_native = None
 		else:
 			with torch.no_grad():
+				w2_folded = self.linear2.weight * self.residual_scale
 				self._w1_eval_bf16 = self.linear1.weight.to(torch.bfloat16)
-				self._w2_eval_bf16 = (
-					self.linear2.weight * self.residual_scale
-				).to(torch.bfloat16)
+				self._w2_eval_bf16 = w2_folded.to(torch.bfloat16)
+				self._w2_eval_native = w2_folded
 		return self
 
 	def _can_use_inference_path(self, X):
@@ -922,12 +929,17 @@ class CheriBlock(torch.nn.Module):
 		"""Return the MLP weights cast to the dot dtype, with
 		residual_scale folded into the second weight.
 
-		In eval mode with fp32 input (the dominant inference case), this
-		returns the bf16 buffers materialized by ``train(False)`` — the
-		cast happens once outside the compiled region, so the per-forward
-		cost is zero and the tensors survive cudagraph replays. For all
-		other cases (train mode reached via no_grad context, or non-fp32
-		input) the cast is computed inline.
+		In eval mode the cast is precomputed at ``train(False)`` time and
+		read from a non-persistent buffer — the tensors live outside the
+		compiled region so they survive cudagraph replays. Two cache
+		entries cover the common cases:
+
+		- fp32 input (params fp32 → bf16 dot): returns the bf16 casts.
+		- input dtype matches param dtype (e.g. bf16 model + bf16 input):
+		  returns the parameter directly for w1 and the precomputed
+		  residual-folded buffer for w2.
+
+		Any other case falls back to an inline cast.
 
 		For fp32 input we downcast to bf16: roughly 2x dot throughput on
 		Hopper at the cost of ~1e-2 max-abs precision loss vs the
@@ -935,6 +947,10 @@ class CheriBlock(torch.nn.Module):
 
 		if X.dtype == torch.float32 and self._w1_eval_bf16 is not None:
 			return self._w1_eval_bf16, self._w2_eval_bf16
+
+		if (self._w2_eval_native is not None
+			and X.dtype == self.linear1.weight.dtype):
+			return self.linear1.weight, self._w2_eval_native
 
 		dt = torch.bfloat16 if X.dtype == torch.float32 else X.dtype
 		w1 = self.linear1.weight.to(dt)
