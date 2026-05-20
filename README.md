@@ -65,13 +65,15 @@ Each block performs a 3-tap dilated depthwise convolution, a per-example layer n
 
 ### Performance
 
-| Path | Single block (N=16, L=1024, C=96) | Full Cherimoya (N=4, L=2114, default) |
-|---|---|---|
-| CPU (pure PyTorch) | 4.71 ms | 21.92 ms |
-| GPU, grad-enabled (training fwd) | 0.101 ms | 1.106 ms |
-| GPU, no_grad (inference megakernel) | **0.064 ms** | **0.583 ms** |
+Per-call latency (ms) on an NVIDIA H200 for a single Cheri Block at `N=512, L=1024, C=96, dilation=4`. The inference megakernel is automatically dispatched under `torch.no_grad()`; calling `.eval()` first lets it reuse a precomputed bf16 weight cast across calls instead of recomputing every call. At this batch size the eval cache adds only ~1–2% — it matters more at small batches.
 
-All three paths agree on the model output to within ~1e-5 max-abs, so existing trained checkpoints produce numerically equivalent predictions through every path. The forward-only megakernel is automatically dispatched when gradients aren't needed; training is unaffected. CPU inference is comfortable for development and one-off evaluation on a laptop — only training and high-throughput inference benefit from a GPU. See [the benchmarks page](https://cherimoya.readthedocs.io/en/latest/benchmarks.html) for measurement methodology and the script you can run on your own hardware.
+| dtype | training-fwd | megakernel + `.eval()` | megakernel, no `.eval()` |
+|---|---|---|---|
+| fp32 | 1.043 | **0.415** | 0.425 (+2%) |
+| bf16 | 0.548 | **0.300** | 0.302 (+1%) |
+| fp16 | 0.547 | **0.297** | 0.301 (+1%) |
+
+All paths agree on the fp32 model output to within ~1e-5 max-abs, so existing trained checkpoints produce numerically equivalent predictions through training-fwd and the megakernel paths. Training is unaffected by the eval cache — the megakernel only fires under no_grad. A pure-PyTorch CPU fallback is also available for development and one-off evaluation on a laptop; only training and high-throughput inference benefit from a GPU. See [the benchmarks page](https://cherimoya.readthedocs.io/en/latest/benchmarks.html) for small-batch breakdowns, full methodology, and the script you can run on your own hardware.
 
 ### End-to-end CLI pipeline
 
