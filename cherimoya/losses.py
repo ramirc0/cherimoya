@@ -23,9 +23,8 @@ def _mixture_loss(y, y_hat_logits, y_hat_logcounts, labels=None,
 	count losses. Each channel is treated as an independent multinomial along
 	the length dimension. The count loss is computed per-group when
 	``signal_groups`` is given (one count per modality — e.g. one count for
-	an unstranded ATAC track, one count for a stranded ``(+, -)`` pair), per-
-	channel otherwise (legacy), and on the total across all channels when the
-	count head produces a single shared output.
+	an unstranded ATAC track, one count for a stranded ``(+, -)`` pair), or
+	per-channel otherwise.
 
 
 	Parameters
@@ -41,9 +40,9 @@ def _mixture_loss(y, y_hat_logits, y_hat_logcounts, labels=None,
 
 	y_hat_logcounts: torch.Tensor, shape=(n, n_count_outputs)
 		The predicted *log counts* for each example. ``n_count_outputs`` is
-		either 1 (shared count head), ``n_groups`` (per-group count head
-		when ``signal_groups`` is given), or ``n_outputs`` (per-channel
-		count head, legacy); the truth is derived from ``y`` accordingly.
+		``n_groups`` when ``signal_groups`` is given (per-group count head)
+		or ``n_outputs`` otherwise (per-channel count head); the truth
+		is derived from ``y`` accordingly.
 
 
 	labels: torch.Tensor, shape=(n,), optional
@@ -99,12 +98,6 @@ def _mixture_loss(y, y_hat_logits, y_hat_logcounts, labels=None,
 			y_per_group.index_add_(1, group_idx, y_per_track)
 		y_per_track = y_per_group
 
-	# Match the count head: collapse across tracks/groups if the head is shared.
-	if y_hat_logcounts.shape[-1] == 1 and y_per_track.shape[-1] > 1:
-		y_ = y_per_track.sum(dim=-1, keepdim=True)
-	else:
-		y_ = y_per_track
-
 	# Profile loss: per-example per-track MNLL, then mean over examples.
 	if labels is not None:
 		mnll = MNLLLoss(log_probs[labels == 1], y[labels == 1])
@@ -113,7 +106,7 @@ def _mixture_loss(y, y_hat_logits, y_hat_logcounts, labels=None,
 	profile_loss = mnll.mean(dim=0)
 
 	# Count loss: per-example per-group squared error, then mean over examples.
-	count_sq_err = (torch.log(y_ + 1) - y_hat_logcounts) ** 2
+	count_sq_err = (torch.log(y_per_track + 1) - y_hat_logcounts) ** 2
 	count_loss = count_sq_err.mean(dim=0)
 
 	return profile_loss, count_loss

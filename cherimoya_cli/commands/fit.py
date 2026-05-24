@@ -127,7 +127,6 @@ def run(args):
 		n_control_tracks=n_control_tracks,
 		expansion=parameters['expansion'],
 		residual_scale=parameters['residual_scale'],
-		single_count_output=parameters['single_count_output'],
 		trimming=trimming,
 		name=parameters['name'],
 		verbose=parameters['verbose']

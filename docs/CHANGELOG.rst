@@ -39,19 +39,30 @@ Data pipeline (**breaking**)
   flat (file-list, group-sizes) form, and to derive the per-group RC
   permutation.
 
-Model
-~~~~~
+Model (**breaking**)
+~~~~~~~~~~~~~~~~~~~~
 
 * The ``Cherimoya`` constructor now takes ``signal_groups`` (list of
   per-group channel counts) in place of the now-deprecated
   ``n_outputs``. ``signal_groups`` controls both the profile head
   width (``sum(signal_groups)``) and the count head width
-  (``len(signal_groups)`` when ``single_count_output=False``, or 1
-  otherwise). So a stranded ``(+, -)`` pair emits two profile
-  channels but a single count prediction — the per-strand counts are
-  always tied. Old checkpoints that stored ``n_outputs`` continue to
-  load: the loader maps ``n_outputs=N`` to ``signal_groups=[1]*N``,
-  matching the new "all-unstranded" semantics of a flat signals list.
+  (always ``len(signal_groups)``). So a stranded ``(+, -)`` pair emits
+  two profile channels but a single count prediction — the per-strand
+  counts are always tied. Old checkpoints that stored ``n_outputs``
+  continue to load: the loader maps ``n_outputs=N`` to
+  ``signal_groups=[1]*N``, matching the new "all-unstranded"
+  semantics of a flat signals list.
+* Removed the ``single_count_output`` constructor flag. The count head
+  is now always one prediction per signal group; the legacy
+  "collapse every channel into one shared scalar" mode is gone
+  because in the grouped formulation it conflates distinct biological
+  modalities. ``Cherimoya.load`` continues to accept legacy
+  checkpoints with ``single_count_output=False`` (those map cleanly to
+  the new per-group head with all-unstranded groups), but explicitly
+  refuses checkpoints saved with ``single_count_output=True`` *and*
+  ``n_outputs > 1`` — there is no faithful re-interpretation of those
+  weights under the new API, and silently choosing one would change
+  predictions.
 * :func:`cherimoya.losses._mixture_loss` and
   :func:`cherimoya.performance.calculate_performance_measures` both
   accept an optional ``signal_groups`` argument. When supplied, the

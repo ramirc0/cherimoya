@@ -111,11 +111,10 @@ class Cherimoya(torch.nn.Module):
 		one biological modality whose channels share an orientation: a
 		single-channel (unstranded) track is a group of size 1, a
 		stranded ``(+, -)`` pair is a group of size 2. The profile head
-		emits one channel per channel (total ``sum(signal_groups)``
-		outputs) and the count head emits one prediction per *group*
-		(total ``len(signal_groups)`` outputs, or 1 when
-		``single_count_output=True``). Default is ``[1]`` — a single
-		unstranded track.
+		emits one channel per signal channel (total
+		``sum(signal_groups)`` outputs); the count head emits one
+		prediction per *group* (total ``len(signal_groups)``). Default
+		is ``[1]`` — a single unstranded track.
 
 	n_outputs: int, optional, DEPRECATED
 		Provided only as a back-compat shorthand for callers and old
@@ -149,12 +148,6 @@ class Cherimoya(torch.nn.Module):
 		producing the output profile. If None, defaults to
 		``46 + sum(2**i for i in range(n_layers))``.
 
-	single_count_output: bool, optional
-		If True, the count head returns a single scalar per example
-		(shared across every signal group). Otherwise it returns one
-		count *per group* — e.g. one count for a stranded ``(+, -)``
-		pair, not two. Default is True.
-
 	verbose: bool, optional
 		Whether the training-progress logger prints to stdout. Default
 		is True.
@@ -163,8 +156,7 @@ class Cherimoya(torch.nn.Module):
 	def __init__(self, n_filters=96, n_layers=9, signal_groups=None,
 		n_outputs=None, n_control_tracks=0, expansion=2,
 		residual_scale=0.15, name=None, trimming=None,
-		single_count_output=True, verbose=True, compile=True,
-		compile_mode='max-autotune'):
+		verbose=True, compile=True, compile_mode='max-autotune'):
 		super(Cherimoya, self).__init__()
 
 		# Resolve signal_groups vs the legacy n_outputs shorthand. The
@@ -197,7 +189,6 @@ class Cherimoya(torch.nn.Module):
 		self.n_control_tracks = n_control_tracks
 		self.expansion = expansion
 		self.residual_scale = residual_scale
-		self.single_count_output = single_count_output
 
 		self.name = name or "cherimoya.{}.{}".format(n_filters, n_layers)
 		self.trimming = trimming if trimming is not None else (
@@ -216,11 +207,10 @@ class Cherimoya(torch.nn.Module):
 			self.n_outputs, kernel_size=1, padding=0)
 
 		n_count_control = 1 if n_control_tracks > 0 else 0
-		n_count_outputs = 1 if single_count_output else self.n_groups
-		self.linear = torch.nn.Linear(n_filters+n_count_control, n_count_outputs)
+		self.linear = torch.nn.Linear(n_filters+n_count_control, self.n_groups)
 
 		self.lw0 = torch.nn.Parameter(torch.ones(self.n_outputs))
-		self.lw1 = torch.nn.Parameter(torch.ones(n_count_outputs))
+		self.lw1 = torch.nn.Parameter(torch.ones(self.n_groups))
 
 		torch.nn.init.trunc_normal_(self.iconv.weight, std=0.02)
 		torch.nn.init.trunc_normal_(self.fconv.weight, std=0.02)
@@ -273,7 +263,6 @@ class Cherimoya(torch.nn.Module):
 			'residual_scale': self.residual_scale,
 			'name': self.name,
 			'trimming': self.trimming,
-			'single_count_output': self.single_count_output,
 			'verbose': False,
 		}
 
@@ -339,15 +328,28 @@ class Cherimoya(torch.nn.Module):
 		payload = torch.load(path, map_location=device, weights_only=True)
 		config = dict(payload['config'])
 
-		# Back-compat: checkpoints saved before signal_groups existed
-		# stored only `n_outputs`. Re-interpret those as N independent
-		# unstranded groups (the new flat-list semantics). This matches
-		# how the legacy code shaped both fconv (n_outputs channels)
-		# and the count head (n_outputs predictions when
-		# single_count_output=False), so the loaded state_dict slots in
-		# without reshaping.
+		# Back-compat: legacy checkpoints stored ``n_outputs`` and
+		# ``single_count_output`` in place of ``signal_groups``. The
+		# count head is now always per-group, so the only legacy combo
+		# that has no faithful re-interpretation is
+		# ``single_count_output=True`` with ``n_outputs > 1`` — that
+		# checkpoint's count head collapsed every channel into a single
+		# shared scalar, a mode this version no longer supports. Any
+		# other legacy combination maps cleanly to N unstranded groups.
+		legacy_single_count = config.pop('single_count_output', None)
 		if 'signal_groups' not in config and 'n_outputs' in config:
-			config['signal_groups'] = [1] * int(config.pop('n_outputs'))
+			n_out = int(config.pop('n_outputs'))
+			if legacy_single_count is True and n_out > 1:
+				raise ValueError(
+					"This checkpoint was saved with single_count_output=True "
+					"and n_outputs={n_out}, whose count head collapsed every "
+					"output channel into a single shared scalar. That mode "
+					"has been removed (the count head is now always per "
+					"group), so the saved weights cannot be loaded without "
+					"changing semantics. Retrain with the new signal_groups "
+					"API to use this model.".format(n_out=n_out)
+				)
+			config['signal_groups'] = [1] * n_out
 
 		# Old checkpoints (saved before the compile kwargs existed) won't have
 		# `compile` or `compile_mode` in their config, so the defaults apply.

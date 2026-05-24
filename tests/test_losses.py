@@ -30,15 +30,6 @@ def test_mixture_loss_multi_track_shapes():
 	assert count_loss.shape == (3,)
 
 
-def test_mixture_loss_shared_count_head():
-	# n_outputs=3 profile but a single shared count output: count loss
-	# is computed against the total count across all tracks.
-	y, logits, logcounts = _toy_inputs(n_outputs=3, n_count_outputs=1)
-	profile_loss, count_loss = _mixture_loss(y, logits, logcounts)
-	assert profile_loss.shape == (3,)
-	assert count_loss.shape == (1,)
-
-
 def test_mixture_loss_count_loss_zero_when_perfect_predictions():
 	y = torch.full((1, 1, 4), 2.0)
 	logits = torch.zeros(1, 1, 4)
@@ -126,25 +117,6 @@ def test_mixture_loss_signal_groups_all_size_one_matches_legacy():
 	_, count_grouped = _mixture_loss(y, logits, logcounts,
 		signal_groups=[1, 1, 1])
 	assert torch.allclose(count_legacy, count_grouped, atol=1e-6)
-
-
-def test_mixture_loss_signal_groups_with_shared_count_head():
-	"""When the count head is shared (n_count_outputs=1) and groups are
-	given, the count target collapses across all groups (and therefore
-	all channels) into a single total."""
-
-	y, logits, _ = _toy_inputs(n_outputs=3)
-	logcounts = torch.randn(y.shape[0], 1,
-		generator=torch.Generator().manual_seed(2))
-
-	_, count_loss = _mixture_loss(y, logits, logcounts,
-		signal_groups=[1, 2])
-	assert count_loss.shape == (1,)
-
-	# Should equal the legacy shared-head result (sum across channels).
-	expected_total = y.sum(dim=(-1, -2)).unsqueeze(-1)  # (n, 1)
-	expected = ((torch.log(expected_total + 1) - logcounts) ** 2).mean(dim=0)
-	assert torch.allclose(count_loss, expected, atol=1e-5)
 
 
 def test_mixture_loss_signal_groups_size_mismatch_raises():

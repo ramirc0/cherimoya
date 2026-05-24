@@ -11,8 +11,8 @@ from cherimoya import Cherimoya
 @pytest.fixture
 def small_model_kwargs():
 	# A tiny but valid configuration that runs quickly on CPU.
-	return dict(n_filters=8, n_layers=3, n_outputs=1, n_control_tracks=0,
-		single_count_output=True, verbose=False)
+	return dict(n_filters=8, n_layers=3, signal_groups=[1], n_control_tracks=0,
+		verbose=False)
 
 
 def _input_window_for(model):
@@ -80,8 +80,8 @@ def test_custom_construction(small_model_kwargs):
 
 
 def test_n_outputs_and_control_tracks_shape():
-	model = Cherimoya(n_filters=8, n_layers=2, n_outputs=2,
-		n_control_tracks=2, single_count_output=False, verbose=False)
+	model = Cherimoya(n_filters=8, n_layers=2, signal_groups=[1, 1],
+		n_control_tracks=2, verbose=False)
 	assert model.fconv.out_channels == 2
 	assert model.fconv.in_channels == 8 + 2  # n_filters + n_control_tracks
 
@@ -110,21 +110,25 @@ def test_signal_groups_legacy_n_outputs_maps_to_all_unstranded():
 
 def test_signal_groups_grouped_pair():
 	model = Cherimoya(n_filters=8, n_layers=2, signal_groups=[1, 2],
-		single_count_output=False, verbose=False)
+		verbose=False)
 	assert model.signal_groups == [1, 2]
 	assert model.n_outputs == 3   # 1 + 2 channels total
 	assert model.n_groups == 2    # 2 groups
 	assert model.fconv.out_channels == 3
-	# Per-group count head when single_count_output=False.
+	# Count head is always per-group.
 	assert model.linear.out_features == 2
 	assert model.lw0.shape == (3,)
 	assert model.lw1.shape == (2,)
 
 
-def test_signal_groups_grouped_pair_with_shared_count_head():
-	model = Cherimoya(n_filters=8, n_layers=2, signal_groups=[1, 2],
-		single_count_output=True, verbose=False)
-	# Shared count head: still one output regardless of grouping.
+def test_signal_groups_stranded_pair_shares_one_count_prediction():
+	"""A stranded ``(+, -)`` pair is one group, so the count head emits
+	a single per-group prediction tying the two strands together."""
+
+	model = Cherimoya(n_filters=8, n_layers=2, signal_groups=[2],
+		verbose=False)
+	assert model.n_outputs == 2   # two profile channels
+	assert model.n_groups == 1    # one group
 	assert model.linear.out_features == 1
 	assert model.lw1.shape == (1,)
 
@@ -137,7 +141,7 @@ def test_signal_groups_mismatch_with_n_outputs_raises():
 
 def test_signal_groups_round_trips_through_save_load(tmp_path):
 	model = Cherimoya(n_filters=8, n_layers=2, signal_groups=[1, 2],
-		single_count_output=False, verbose=False)
+		verbose=False)
 	path = tmp_path / "m.torch"
 	model.save(str(path))
 	loaded = Cherimoya.load(str(path), compile=False)
@@ -149,11 +153,12 @@ def test_signal_groups_round_trips_through_save_load(tmp_path):
 def test_load_legacy_checkpoint_with_only_n_outputs(tmp_path):
 	"""A checkpoint saved with the pre-grouping format (config has
 	n_outputs but no signal_groups) must load and be reinterpreted as
-	all-unstranded groups."""
+	all-unstranded groups. single_count_output=False (the per-channel
+	count-head case) maps cleanly to N unstranded groups."""
 
 	# Hand-craft a legacy-style checkpoint without signal_groups.
 	model = Cherimoya(n_filters=8, n_layers=2, signal_groups=[1, 1, 1],
-		single_count_output=False, verbose=False)
+		verbose=False)
 	state = model.state_dict()
 	legacy_config = {
 		'n_filters': 8, 'n_layers': 2, 'n_outputs': 3,
@@ -169,39 +174,64 @@ def test_load_legacy_checkpoint_with_only_n_outputs(tmp_path):
 	assert loaded.n_outputs == 3
 
 
-@pytest.mark.parametrize("n_outputs,single_count_output,expected_lw1", [
-	(1, True,  (1,)),   # single-task: back-compat with pre-vector checkpoints
-	(1, False, (1,)),   # single-task, per-track count head: same shape
-	(3, True,  (1,)),   # multi-track profile, shared count head
-	(3, False, (3,)),   # multi-track profile, per-track count head
-])
-def test_lw0_lw1_shapes(n_outputs, single_count_output, expected_lw1):
-	"""lw0 sizes with n_outputs (one weight per profile track); lw1 sizes
-	with the count-head output dim (1 when single_count_output=True else
-	n_outputs)."""
+def test_load_legacy_checkpoint_with_shared_count_head_errors(tmp_path):
+	"""Legacy checkpoints with single_count_output=True and n_outputs>1
+	collapsed every channel into a single shared count scalar — a mode
+	that no longer exists. Rather than silently re-interpret the
+	weights, the loader must refuse with a clear error."""
 
-	model = Cherimoya(n_filters=8, n_layers=2, n_outputs=n_outputs,
-		single_count_output=single_count_output, verbose=False)
-	assert model.lw0.shape == (n_outputs,)
+	# Build a single-track model just so its state_dict is shape-valid
+	# enough for the load test to reach the config check first.
+	model = Cherimoya(n_filters=8, n_layers=2, signal_groups=[1],
+		verbose=False)
+	state = model.state_dict()
+	# Craft a config that *claims* the legacy collapsed-count form.
+	legacy_config = {
+		'n_filters': 8, 'n_layers': 2, 'n_outputs': 3,
+		'n_control_tracks': 0, 'expansion': 2, 'residual_scale': 0.15,
+		'name': 'cherimoya.8.2', 'trimming': model.trimming,
+		'single_count_output': True, 'verbose': False,
+	}
+	path = tmp_path / "legacy_shared.torch"
+	torch.save({'config': legacy_config, 'state_dict': state}, str(path))
+
+	with pytest.raises(ValueError, match="single_count_output=True"):
+		Cherimoya.load(str(path), compile=False)
+
+
+@pytest.mark.parametrize("signal_groups,expected_lw0,expected_lw1", [
+	([1],       (1,), (1,)),  # single unstranded — matches every pre-grouping checkpoint
+	([1, 1, 1], (3,), (3,)),  # three unstranded groups — one count per group
+	([1, 2],    (3,), (2,)),  # mixed: profile per channel, count per group
+	([2],       (2,), (1,)),  # one stranded pair: 2 profile channels, 1 shared count
+])
+def test_lw0_lw1_shapes(signal_groups, expected_lw0, expected_lw1):
+	"""lw0 sizes with sum(signal_groups) (one weight per profile channel);
+	lw1 sizes with len(signal_groups) (one weight per count-head output,
+	which is always per-group)."""
+
+	model = Cherimoya(n_filters=8, n_layers=2,
+		signal_groups=signal_groups, verbose=False)
+	assert model.lw0.shape == expected_lw0
 	assert model.lw1.shape == expected_lw1
 	# Both initialize to ones; the fit loop relies on this.
-	assert torch.allclose(model.lw0, torch.ones(n_outputs))
+	assert torch.allclose(model.lw0, torch.ones(*expected_lw0))
 	assert torch.allclose(model.lw1, torch.ones(*expected_lw1))
 
 
-@pytest.mark.parametrize("n_outputs,single_count_output", [
-	(1, True),    # the format every existing checkpoint was saved in
-	(3, False),
-	(3, True),
+@pytest.mark.parametrize("signal_groups", [
+	[1],          # the format every pre-grouping checkpoint was saved in
+	[1, 1, 1],    # all unstranded
+	[1, 2],       # mixed
 ])
-def test_lw0_lw1_save_load_round_trip(tmp_path, n_outputs, single_count_output):
-	"""Save/load preserves lw0/lw1 shapes and values across all
-	n_outputs / single_count_output combinations. The (1, True) case
-	also exercises back-compat with checkpoints saved before lw0/lw1
-	became vectors (where the state_dict already stored shape (1,))."""
+def test_lw0_lw1_save_load_round_trip(tmp_path, signal_groups):
+	"""Save/load preserves lw0/lw1 shapes and values across all grouping
+	shapes. The ``[1]`` case also exercises back-compat with checkpoints
+	saved before lw0/lw1 became vectors (where the state_dict already
+	stored shape (1,))."""
 
-	model = Cherimoya(n_filters=8, n_layers=2, n_outputs=n_outputs,
-		single_count_output=single_count_output, verbose=False)
+	model = Cherimoya(n_filters=8, n_layers=2,
+		signal_groups=signal_groups, verbose=False)
 	# Perturb the weights so the round-trip comparison is non-trivial.
 	with torch.no_grad():
 		model.lw0.add_(torch.randn_like(model.lw0) * 0.1)
@@ -235,7 +265,7 @@ def test_forward_shape_no_controls(small_model_kwargs):
 
 def test_forward_with_controls():
 	model = Cherimoya(n_filters=8, n_layers=2, n_outputs=1,
-		n_control_tracks=2, single_count_output=True, verbose=False).eval()
+		n_control_tracks=2, verbose=False).eval()
 	L = _input_window_for(model)
 	X = torch.randn(1, 4, L)
 	X_ctl = torch.randn(1, 2, L)
@@ -245,8 +275,8 @@ def test_forward_with_controls():
 
 
 def test_forward_multi_output_per_track_counts():
-	model = Cherimoya(n_filters=8, n_layers=2, n_outputs=3,
-		n_control_tracks=0, single_count_output=False, verbose=False).eval()
+	model = Cherimoya(n_filters=8, n_layers=2, signal_groups=[1, 1, 1],
+		n_control_tracks=0, verbose=False).eval()
 	L = _input_window_for(model)
 	X = torch.randn(1, 4, L)
 	y_profile, y_counts = model(X)
@@ -362,7 +392,7 @@ def test_model_no_grad_matches_grad_with_controls():
 	principle differ."""
 
 	model = Cherimoya(n_filters=8, n_layers=2, n_outputs=1,
-		n_control_tracks=2, single_count_output=True, verbose=False).eval()
+		n_control_tracks=2, verbose=False).eval()
 	L = _input_window_for(model)
 	X = torch.randn(1, 4, L)
 	# Counts head takes log(sum(X_ctl)+1); use non-negative controls so
@@ -385,7 +415,7 @@ def test_model_small_n_filters_works_under_no_grad():
 	may impose. Such configurations must transparently fall back."""
 
 	model = Cherimoya(n_filters=8, n_layers=2, expansion=1, n_outputs=1,
-		n_control_tracks=0, single_count_output=True, verbose=False).eval()
+		n_control_tracks=0, verbose=False).eval()
 	L = _input_window_for(model)
 	X = torch.randn(1, 4, L)
 
@@ -407,8 +437,7 @@ def test_model_no_grad_matches_grad_cuda():
 	does not compound errors past the 1e-4 budget for fp32 inputs."""
 
 	model = Cherimoya(n_filters=32, n_layers=3, n_outputs=1,
-		n_control_tracks=0, single_count_output=True,
-		verbose=False).cuda().eval()
+		n_control_tracks=0, verbose=False).cuda().eval()
 	L = _input_window_for(model)
 	X = torch.randn(2, 4, L, device='cuda')
 
@@ -431,8 +460,7 @@ def test_model_save_load_no_grad_matches_grad_cuda(tmp_path):
 	contract trained checkpoints depend on."""
 
 	model = Cherimoya(n_filters=32, n_layers=3, n_outputs=1,
-		n_control_tracks=0, single_count_output=True,
-		verbose=False).cuda().eval()
+		n_control_tracks=0, verbose=False).cuda().eval()
 	L = _input_window_for(model)
 	X = torch.randn(1, 4, L, device='cuda')
 
@@ -473,9 +501,9 @@ def test_cherimoya_backward_matches_cpu_autograd():
 
 	torch.manual_seed(0)
 	cpu_model = Cherimoya(n_filters=16, n_layers=3, n_outputs=1,
-		n_control_tracks=0, single_count_output=True, verbose=False)
+		n_control_tracks=0, verbose=False)
 	gpu_model = Cherimoya(n_filters=16, n_layers=3, n_outputs=1,
-		n_control_tracks=0, single_count_output=True, verbose=False).cuda()
+		n_control_tracks=0, verbose=False).cuda()
 	gpu_model.load_state_dict(cpu_model.state_dict())
 
 	L = _input_window_for(cpu_model)
@@ -536,11 +564,9 @@ def test_cherimoya_inference_megakernel_matches_cpu():
 
 	torch.manual_seed(0)
 	cpu_model = Cherimoya(n_filters=16, n_layers=3, n_outputs=1,
-		n_control_tracks=0, single_count_output=True,
-		verbose=False).eval()
+		n_control_tracks=0, verbose=False).eval()
 	gpu_model = Cherimoya(n_filters=16, n_layers=3, n_outputs=1,
-		n_control_tracks=0, single_count_output=True,
-		verbose=False).cuda().eval()
+		n_control_tracks=0, verbose=False).cuda().eval()
 	gpu_model.load_state_dict(cpu_model.state_dict())
 
 	L = _input_window_for(cpu_model)
