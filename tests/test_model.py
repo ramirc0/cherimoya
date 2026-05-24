@@ -104,9 +104,10 @@ def test_signal_groups_grouped_pair():
 	assert model.n_outputs == 3   # 1 + 2 channels total
 	assert model.n_groups == 2    # 2 groups
 	assert model.fconv.out_channels == 3
-	# Count head is always per-group.
+	# Count head is per-group; lw0 and lw1 are *both* per-group so each
+	# modality contributes equally to the Kendall-Gal loss.
 	assert model.linear.out_features == 2
-	assert model.lw0.shape == (3,)
+	assert model.lw0.shape == (2,)
 	assert model.lw1.shape == (2,)
 
 
@@ -169,7 +170,8 @@ def test_grouped_model_forward_loss_measures_integrate():
 
 	profile_loss, count_loss = _mixture_loss(
 		y, y_hat_logits, y_hat_logcounts, signal_groups=[1, 2])
-	assert profile_loss.shape == (3,)
+	# Per-group on both sides now: one loss term per modality.
+	assert profile_loss.shape == (2,)
 	assert count_loss.shape == (2,)
 	assert torch.isfinite(profile_loss).all()
 	assert torch.isfinite(count_loss).all()
@@ -301,14 +303,15 @@ def test_signal_groups_round_trips_through_save_load(tmp_path):
 
 @pytest.mark.parametrize("signal_groups,expected_lw0,expected_lw1", [
 	([1],       (1,), (1,)),  # single unstranded — matches every pre-grouping checkpoint
-	([1, 1, 1], (3,), (3,)),  # three unstranded groups — one count per group
-	([1, 2],    (3,), (2,)),  # mixed: profile per channel, count per group
-	([2],       (2,), (1,)),  # one stranded pair: 2 profile channels, 1 shared count
+	([1, 1, 1], (3,), (3,)),  # three unstranded groups — one weight per group
+	([1, 2],    (2,), (2,)),  # mixed: one profile loss term per *group*
+	([2],       (1,), (1,)),  # one stranded pair: 2 profile channels share one loss
 ])
 def test_lw0_lw1_shapes(signal_groups, expected_lw0, expected_lw1):
-	"""lw0 sizes with sum(signal_groups) (one weight per profile channel);
-	lw1 sizes with len(signal_groups) (one weight per count-head output,
-	which is always per-group)."""
+	"""Both `lw0` and `lw1` size with `len(signal_groups)` — every signal
+	group contributes one profile-loss term and one count-loss term
+	regardless of channel count, so the uncertainty weights are
+	per-group on both sides of the Kendall-Gal combination."""
 
 	model = Cherimoya(n_filters=8, n_layers=2,
 		signal_groups=signal_groups, verbose=False)

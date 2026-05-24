@@ -63,6 +63,19 @@ Data pipeline (**breaking**)
   groups still get a readable terminal. Best-model selection
   continues to use the mean-across-groups count Pearson and is
   unchanged.
+* Every signal group now contributes one term to the loss
+  regardless of how many channels it has. ``_mixture_loss``'s
+  profile component is averaged within each group (so a stranded
+  ``(+, -)`` pair's two per-strand MNLLs combine into one
+  per-group profile loss) before Kendall-Gal weighting; ``lw0``
+  drops from shape ``(sum(signal_groups),)`` to
+  ``(len(signal_groups),)``, matching ``lw1``. The summary log's
+  ``Validation Profile Pearson`` now reports the mean over groups
+  of (mean over the group's channels) so the headline metric
+  agrees with the loss weighting — no double-counting of stranded
+  pairs. Single-track models (``signal_groups=[1]``) are
+  unaffected: every shape and value collapses to ``(1,)`` as
+  before.
 
 Model (**breaking**)
 ~~~~~~~~~~~~~~~~~~~~

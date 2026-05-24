@@ -111,9 +111,9 @@ head, and the count-head linear layer — is initialized with
 ``trunc_normal_(std=0.02)``. The biases that exist (input stem, profile
 head, count head) are zero-initialized. The Cheri Block layers
 themselves have no biases. The Kendall-Gal loss-weight tensors
-``lw0`` (shape ``(sum(signal_groups),)`` — one per profile channel)
-and ``lw1`` (shape ``(len(signal_groups),)`` — one per count-head
-output, i.e. one per signal group) are initialized to ones.
+``lw0`` and ``lw1`` are both shape ``(len(signal_groups),)`` — one
+uncertainty weight per signal group on each side of the profile /
+counts split — and are initialized to ones.
 
 This small fixed init combined with the fixed ``residual_scale=0.15``
 on each Cheri Block keeps the per-block contribution to the residual
@@ -176,11 +176,15 @@ this in your own training script if you want different routing.
 Loss design
 -----------
 
-Cherimoya uses a two-component loss:
+Cherimoya uses a two-component loss, both terms pooled per signal
+group so every modality contributes equally regardless of channel
+count:
 
-* **Profile loss**: Multinomial negative log-likelihood (MNLL),
-  computed per profile channel along the length axis (one multinomial
-  per output channel — ``sum(signal_groups)`` total).
+* **Profile loss**: Per-channel multinomial negative log-likelihood
+  (MNLL) along the length axis, then averaged across the channels of
+  each signal group. A stranded ``(+, -)`` pair contributes one
+  profile-loss term (the mean of its two strands' MNLLs); an
+  unstranded track contributes one term directly.
 
 * **Counts loss**: ``log1pMSE`` between predicted log counts and
   ``log(1 + total_counts)``, computed per signal *group*. A stranded
@@ -188,15 +192,14 @@ Cherimoya uses a two-component loss:
   to the sum of both strands' counts.
 
 These are combined using **Kendall-Gal uncertainty weighting** with
-two learnable weight tensors: ``lw0`` of shape
-``(sum(signal_groups),)`` weights the per-channel profile losses, and
-``lw1`` of shape ``(len(signal_groups),)`` weights the per-group count
-losses. For single-task models (``signal_groups=[1]``) both tensors
-collapse to shape ``(1,)``.
+two learnable weight tensors both shape ``(len(signal_groups),)``:
+``lw0`` weights the per-group profile loss and ``lw1`` weights the
+per-group count loss. For single-task models (``signal_groups=[1]``)
+both collapse to shape ``(1,)``.
 
 .. code-block:: python
 
-   w0 = 1.0 / (2.0 * self.lw0 ** 2)            # shape (sum(signal_groups),)
+   w0 = 1.0 / (2.0 * self.lw0 ** 2)            # shape (len(signal_groups),)
    w1 = 1.0 / (2.0 * self.lw1 ** 2)            # shape (len(signal_groups),)
    loss = (w0 * profile_loss).sum() + (w1 * count_loss).sum()
    if self.lw0.requires_grad:

@@ -185,7 +185,7 @@ class Cherimoya(torch.nn.Module):
 		n_count_control = 1 if n_control_tracks > 0 else 0
 		self.linear = torch.nn.Linear(n_filters+n_count_control, self.n_groups)
 
-		self.lw0 = torch.nn.Parameter(torch.ones(self.n_outputs))
+		self.lw0 = torch.nn.Parameter(torch.ones(self.n_groups))
 		self.lw1 = torch.nn.Parameter(torch.ones(self.n_groups))
 
 		torch.nn.init.trunc_normal_(self.iconv.weight, std=0.02)
@@ -563,18 +563,20 @@ class Cherimoya(torch.nn.Module):
 				valid_count_corr = valid_count_per_group.mean()
 				valid_time = time.time() - tic
 
-				# Per-group profile Pearson for the detail log. The
-				# raw `measures['profile_pearson']` is shape
+				# Per-group profile Pearson. The raw
+				# `measures['profile_pearson']` is shape
 				# (n_loci, sum(signal_groups)); for each group, average
-				# over its channels and the locus dim. ATAC ends up
-				# with one number; a stranded (+, -) group ends up
-				# with one number (the mean of its two strands).
+				# over its channels and the locus dim so each modality
+				# contributes one number, matching how the loss is
+				# pooled and how the count Pearson is reported.
 				per_group_profile_corr = []
 				offset = 0
 				for g in self.signal_groups:
 					chunk = valid_profile_corr[:, offset:offset+g]
 					per_group_profile_corr.append(float(chunk.mean()))
 					offset += g
+				valid_profile_corr_mean = float(numpy.mean(
+					per_group_profile_corr))
 
 				summary_row = [epoch,
 					iteration,
@@ -583,7 +585,7 @@ class Cherimoya(torch.nn.Module):
 					profile_loss.mean().item(),
 					count_loss.mean().item(),
 					valid_profile_loss.mean().item(),
-					valid_profile_corr.mean(),
+					valid_profile_corr_mean,
 					valid_count_corr,
 					valid_count_loss.mean().item(),
 					(valid_count_corr > best_corr).item()]
