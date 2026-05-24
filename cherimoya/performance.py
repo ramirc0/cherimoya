@@ -13,6 +13,7 @@ AND THE SECOND ARGUMENT MUST BE IN COUNT SPACE FOR THESE FUNCTIONS.
 
 import torch
 
+from .io import _validate_signal_groups
 from .losses import MNLLLoss
 
 
@@ -452,18 +453,20 @@ def calculate_performance_measures(logps, true_counts, pred_log_counts,
 
 	# Count Performance Measures.
 	#
-	# Build the per-example true count target. There are three modes:
-	#  - signal_groups given AND pred has one count per group: pool true
-	#    counts within each group, so a stranded (+, -) pair contributes
-	#    one per-group target that lines up with the per-group head.
-	#  - pred has one count (shared head): collapse the channel dim too,
-	#    yielding a single per-example total target.
-	#  - signal_groups is None and there are multiple predicted counts:
-	#    legacy fall-through — every predicted count is compared against
-	#    the same per-example total.
+	# Build the per-example true count target. The model-driven path is
+	# the first branch: `signal_groups` is given and matches the number
+	# of predicted counts, so the true counts are pooled per group and
+	# each predicted count is scored against its own group's target.
+	# The else branch is a fall-through for direct external callers
+	# that pass multi-channel predictions without grouping — every
+	# predicted count is compared against the same per-example total
+	# across all channels. Single-output models (`pred.shape[-1] == 1`)
+	# land here too and degenerate to the single-target case.
 	n_pred = pred_log_counts.shape[-1]
-	per_channel = true_counts.sum(dim=-1)  # (n, n_outputs)
+	per_channel = true_counts.sum(dim=-1)  # (n, sum(signal_groups))
 
+	if signal_groups is not None:
+		_validate_signal_groups(signal_groups)
 	if signal_groups is not None and n_pred == len(signal_groups):
 		if sum(signal_groups) != per_channel.shape[-1]:
 			raise ValueError(

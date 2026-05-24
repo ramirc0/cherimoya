@@ -543,10 +543,15 @@ JSON schema:
      - BED of evaluation loci.
    * - ``controls``
      - ``null``
-     - Optional list of control bigWigs (must match training).
+     - Optional list of control bigWigs (must match training). Same
+       grouping rule as ``signals`` below.
    * - ``signals``
      - ``null``
-     - Signal bigWigs (must match training, for computing metrics).
+     - Signal bigWigs to score against (must match training). Accepts
+       the same flat-or-grouped form as ``fit``'s ``signals``. The
+       per-group count pooling used to compute count metrics is
+       recovered from the loaded model's checkpoint, so passing the
+       structured form is recommended but not required.
    * - ``chroms``
      - ``["chr8", "chr20"]``
      - Held-out chromosomes.
@@ -678,3 +683,22 @@ Other list-valued fields (``loci``, ``negatives``, ``controls``) must
 be either ``null`` or a same-length list as the expanded
 ``signals``. Each job is written to ``{name}.pipeline.json`` and run
 via ``subprocess.run(["cherimoya", "pipeline", "-p", jname])``.
+
+.. note::
+
+   ``signals`` in a batch JSON is a *list of per-model signal
+   specs*: one entry per pipeline to run in parallel. With the new
+   grouped form each per-model entry is itself a flat-or-grouped
+   signals list. So a batch of two stranded BPNet models is::
+
+       "signals": [
+           [["expt1.+.bw", "expt1.-.bw"]],
+           [["expt2.+.bw", "expt2.-.bw"]]
+       ]
+
+   The outer list selects the model; each inner list is the
+   ``signals`` field of one pipeline JSON. Previously the
+   double-nesting was implicit (a flat two-element pair was a
+   stranded pair); under the grouped API a flat two-element list is
+   two *unstranded* tracks, so stranded batch jobs must use the
+   nested form above.

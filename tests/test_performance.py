@@ -185,3 +185,35 @@ def test_calculate_performance_measures_legacy_total_when_no_groups():
 		measures=['count_pearson', 'count_mse'],
 	)
 	assert torch.allclose(measures['count_mse'], torch.zeros(3), atol=1e-5)
+
+
+def test_calculate_performance_measures_signal_groups_sum_mismatch_raises():
+	"""sum(signal_groups) must equal true_counts.shape[1] when groups
+	are given and the prediction has one count per group. Otherwise the
+	caller has wired the modalities up wrong and we'd silently pool
+	channels into the wrong groups."""
+
+	logits = torch.randn(2, 3, 8)
+	true_counts = torch.randint(0, 5, (2, 3, 8)).float()
+	pred = torch.randn(2, 2)  # 2 group-count outputs
+
+	# signal_groups=[1, 1] sums to 2, but true_counts has 3 channels.
+	with pytest.raises(ValueError, match="sum.signal_groups"):
+		calculate_performance_measures(
+			logits, true_counts, pred,
+			measures=['count_pearson'], signal_groups=[1, 1])
+
+
+def test_calculate_performance_measures_validates_signal_groups():
+	"""The shared validator is invoked, so bad signal_groups (empty,
+	zero entry, etc.) fail with a clear error rather than silently
+	producing a degenerate target tensor."""
+
+	logits = torch.randn(2, 3, 8)
+	true_counts = torch.randint(0, 5, (2, 3, 8)).float()
+	pred = torch.randn(2, 3)
+
+	with pytest.raises(ValueError, match="positive ints"):
+		calculate_performance_measures(
+			logits, true_counts, pred,
+			measures=['count_pearson'], signal_groups=[0, 3])

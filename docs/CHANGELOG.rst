@@ -38,6 +38,21 @@ Data pipeline (**breaking**)
   helpers callers can use to convert between the grouped form and the
   flat (file-list, group-sizes) form, and to derive the per-group RC
   permutation.
+* :func:`cherimoya.io.PeakGenerator`'s outlier filter is now
+  per-group: it computes one 99th-percentile-times-1.2 threshold per
+  signal group and drops a locus if it's an outlier in *any* group.
+  Previously the threshold was computed over the sum of counts across
+  all channels and the full length, which collapsed distinct
+  modalities into one number — a TF with peaks two orders of
+  magnitude higher than a co-trained ATAC track would dominate the
+  threshold. The single-group case reduces exactly to the legacy
+  behavior.
+* The ``cherimoya batch`` command's ``signals`` JSON field is now a
+  list of *per-model* signal specs, with each entry itself in the new
+  grouped form. Stranded batch jobs that previously wrote
+  ``signals=[[plus, minus], [plus, minus]]`` (two stranded models)
+  must now write ``signals=[[[plus, minus]], [[plus, minus]]]`` — see
+  the batch section of :doc:`cli` for details.
 
 Model (**breaking**)
 ~~~~~~~~~~~~~~~~~~~~

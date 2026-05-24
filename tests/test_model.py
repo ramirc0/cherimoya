@@ -131,6 +131,143 @@ def test_signal_groups_rejects_bad_values():
 			verbose=False)
 
 
+def test_signal_groups_rejects_empty_list():
+	"""An empty signal_groups would construct a model with zero output
+	channels — degenerate. The constructor must catch this at the
+	boundary rather than letting Conv1d / Linear error 20 lines later
+	with a less helpful message."""
+
+	with pytest.raises(ValueError, match="non-empty"):
+		Cherimoya(n_filters=8, n_layers=2, signal_groups=[], verbose=False)
+
+
+def test_grouped_model_forward_loss_measures_integrate():
+	"""End-to-end shape contract for a co-trained grouped model: the
+	model's forward, the mixture loss, and the performance measures
+	must all line up on the same ``signal_groups=[1, 2]`` config. This
+	is what would catch a mismatch where, say, the count head was
+	sized off n_outputs and the loss off n_groups."""
+
+	from cherimoya.losses import _mixture_loss
+	from cherimoya.performance import calculate_performance_measures
+
+	model = Cherimoya(n_filters=8, n_layers=2, signal_groups=[1, 2],
+		verbose=False, compile=False).eval()
+	L = _input_window_for(model)
+	out_L = L - 2 * model.trimming
+
+	X = torch.randn(4, 4, L)
+	y = torch.randint(0, 5, (4, 3, out_L)).float()
+
+	with torch.no_grad():
+		y_hat_logits, y_hat_logcounts = model(X)
+
+	# Profile head emits sum(signal_groups) channels; count head emits
+	# len(signal_groups) predictions.
+	assert y_hat_logits.shape == (4, 3, out_L)
+	assert y_hat_logcounts.shape == (4, 2)
+
+	profile_loss, count_loss = _mixture_loss(
+		y, y_hat_logits, y_hat_logcounts, signal_groups=[1, 2])
+	assert profile_loss.shape == (3,)
+	assert count_loss.shape == (2,)
+	assert torch.isfinite(profile_loss).all()
+	assert torch.isfinite(count_loss).all()
+
+	measures = calculate_performance_measures(
+		y_hat_logits, y, y_hat_logcounts,
+		measures=['count_pearson', 'count_mse'],
+		signal_groups=[1, 2])
+	# One Pearson correlation per group.
+	assert measures['count_pearson'].shape == (2,)
+	assert torch.isfinite(measures['count_pearson']).all()
+
+
+def test_grouped_model_fit_smoke(tmp_path):
+	"""Run ``Cherimoya.fit`` for a few iterations on a grouped model
+	(``signal_groups=[1, 2]``) with synthetic data. Confirms the
+	training loop, validation pass, optimizer routing, save callback,
+	and ``_mixture_loss`` / ``calculate_performance_measures``
+	plumbing all agree on shapes end-to-end. CPU-only and ~seconds."""
+
+	import torch
+	import os
+	from torch.optim import Muon
+	from torch.optim.lr_scheduler import LinearLR
+	from cherimoya.io import (PeakNegativeSampler,
+		channel_permutation_from_groups)
+
+	signal_groups = [1, 2]
+	n_outputs = sum(signal_groups)
+
+	model = Cherimoya(n_filters=8, n_layers=2,
+		signal_groups=signal_groups, verbose=False, compile=False)
+	# .save() writes next to model.name; redirect into tmp_path so the
+	# test doesn't pollute the working directory.
+	model.name = str(tmp_path / "smoke")
+
+	L = _input_window_for(model)
+	out_L = L - 2 * model.trimming
+
+	# Synthetic peaks + negatives. Use deterministic seeds so the test
+	# can't flake from random initialization quirks.
+	g = torch.Generator().manual_seed(0)
+	n_peaks, n_negs = 16, 8
+	peak_sequences = torch.zeros(n_peaks, 4, L)
+	peak_sequences[:, 0, :] = 1.0  # one-hot at A
+	peak_signals = torch.randint(0, 5, (n_peaks, n_outputs, out_L),
+		generator=g).float()
+	neg_sequences = torch.zeros(n_negs, 4, L)
+	neg_sequences[:, 0, :] = 1.0
+	neg_signals = torch.zeros(n_negs, n_outputs, out_L)
+
+	sampler = PeakNegativeSampler(
+		peak_sequences=peak_sequences, peak_signals=peak_signals,
+		negative_sequences=neg_sequences, negative_signals=neg_signals,
+		in_window=L, out_window=out_L, max_jitter=0,
+		negative_ratio=0, random_state=0, reverse_complement=True,
+		signal_perm=channel_permutation_from_groups(signal_groups))
+	training_data = torch.utils.data.DataLoader(sampler, batch_size=4,
+		num_workers=0)
+
+	# Optimizers — split params the same way fit.py does so 2D weights
+	# go to Muon and everything else to AdamW.
+	muon_params, adam_params = [], []
+	for name, p in model.named_parameters():
+		if p.ndim == 2 and "weight" in name and name != "linear.weight":
+			muon_params.append(p)
+		else:
+			adam_params.append(p)
+	muon_opt = Muon(muon_params, lr=1e-3, weight_decay=0.0)
+	adam_opt = torch.optim.AdamW(adam_params, lr=1e-3, weight_decay=0.0)
+	muon_sched = LinearLR(muon_opt, start_factor=1.0, total_iters=1)
+	adam_sched = LinearLR(adam_opt, start_factor=1.0, total_iters=1)
+
+	# Validation tensors with the same shape contract.
+	X_valid = torch.zeros(4, 4, L)
+	X_valid[:, 0, :] = 1.0
+	y_valid = torch.randint(0, 5, (4, n_outputs, out_L),
+		generator=g).float()
+
+	cwd = os.getcwd()
+	os.chdir(tmp_path)
+	try:
+		best = model.fit(training_data, muon_opt, adam_opt,
+			muon_sched, adam_sched,
+			X_valid=X_valid, X_ctl_valid=None, y_valid=y_valid,
+			max_epochs=2, batch_size=4, dtype='float32',
+			device='cpu', early_stopping=None)
+	finally:
+		os.chdir(cwd)
+
+	# `best` is the validation count-Pearson at the best epoch (a
+	# numpy/torch scalar after `nan_to_num`). It just needs to come
+	# back as a finite real number — NaN would indicate a degenerate
+	# count target shape.
+	import math
+	assert math.isfinite(float(best))
+
+
 def test_signal_groups_round_trips_through_save_load(tmp_path):
 	model = Cherimoya(n_filters=8, n_layers=2, signal_groups=[1, 2],
 		verbose=False)

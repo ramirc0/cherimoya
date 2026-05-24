@@ -12,6 +12,7 @@ import numpy
 import torch
 
 from .cheri import CheriBlock
+from .io import _validate_signal_groups
 from .losses import _mixture_loss
 from .performance import calculate_performance_measures
 
@@ -153,10 +154,7 @@ class Cherimoya(torch.nn.Module):
 		if signal_groups is None:
 			signal_groups = [1]
 		signal_groups = list(signal_groups)
-		if any((not isinstance(g, int)) or g < 1 for g in signal_groups):
-			raise ValueError(
-				"signal_groups must be a list of positive ints; got {!r}"
-				.format(signal_groups))
+		_validate_signal_groups(signal_groups)
 
 		self.signal_groups = signal_groups
 		self.n_outputs = sum(signal_groups)
@@ -339,15 +337,20 @@ class Cherimoya(torch.nn.Module):
 		X: torch.tensor, shape=(batch_size, 4, length)
 			The one-hot encoded batch of sequences.
 
-		X_ctl: torch.tensor or None, shape=(batch_size, n_strands, length)
+		X_ctl: torch.tensor or None, shape=(batch_size, n_control_tracks, length)
 			A value representing the signal of the control at each position in
 			the sequence. If no controls, pass in None. Default is None.
 
 		Returns
 		-------
-		y_profile: torch.tensor, shape=(batch_size, n_strands, out_length)
-			The output predictions for each strand trimmed to the output
-			length.
+		y_profile: torch.tensor, shape=(batch_size, sum(signal_groups), out_length)
+			Per-channel profile logits trimmed to the output length —
+			one channel per signal channel across all groups.
+
+		y_counts: torch.tensor, shape=(batch_size, len(signal_groups))
+			Per-group log-count predictions — one prediction per signal
+			group, so a stranded ``(+, -)`` pair contributes a single
+			shared count.
 		"""
 
 		start, end = self.trimming, X.shape[2] - self.trimming
@@ -425,7 +428,7 @@ class Cherimoya(torch.nn.Module):
 			predictions at the end of each epoch. If n_control_tracks is None, pass in
 			None. Default is None.
 
-		y_valid: torch.tensor or None, shape=(n, n_outputs, output_length)
+		y_valid: torch.tensor or None, shape=(n, sum(signal_groups), output_length)
 			A block of signals to validate against at the end of each epochs.
 
 		max_epochs: int

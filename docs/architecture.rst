@@ -192,8 +192,7 @@ two learnable weight tensors: ``lw0`` of shape
 ``(sum(signal_groups),)`` weights the per-channel profile losses, and
 ``lw1`` of shape ``(len(signal_groups),)`` weights the per-group count
 losses. For single-task models (``signal_groups=[1]``) both tensors
-are shape ``(1,)``, matching the shape stored in every pre-vector
-checkpoint.
+collapse to shape ``(1,)``.
 
 .. code-block:: python
 

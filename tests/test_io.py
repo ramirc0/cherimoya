@@ -1,11 +1,14 @@
 """Tests for PeakNegativeSampler that don't require BigWig / FASTA files."""
 
+from unittest import mock
+
 import numpy
 import pytest
 import torch
 
-from cherimoya.io import (PeakNegativeSampler, normalize_signal_groups,
-	channel_permutation_from_groups)
+from cherimoya.io import (PeakGenerator, PeakNegativeSampler,
+	normalize_signal_groups, channel_permutation_from_groups,
+	_validate_signal_groups)
 
 
 def _make_sampler(n_peaks=8, n_negs=8, in_window=20, out_window=10,
@@ -433,6 +436,253 @@ def test_pipeline_bam2bw_control_stranded_form_is_one_stranded_pair():
 	assert flat == [
 		"my_experiment.control.+.bw", "my_experiment.control.-.bw"]
 	assert groups == [2]
+
+
+# --------- _validate_signal_groups ----------------------------------------
+
+@pytest.mark.parametrize("groups", [
+	[1],
+	[1, 1, 1],
+	[2],
+	[1, 2],
+	[2, 1, 3],
+])
+def test_validate_signal_groups_accepts_valid(groups):
+	_validate_signal_groups(groups)   # no raise
+
+
+def test_validate_signal_groups_rejects_empty():
+	with pytest.raises(ValueError, match="non-empty"):
+		_validate_signal_groups([])
+
+
+def test_validate_signal_groups_rejects_non_list():
+	with pytest.raises(ValueError, match="list of positive ints"):
+		_validate_signal_groups(2)
+	with pytest.raises(ValueError, match="list of positive ints"):
+		_validate_signal_groups(None)
+
+
+@pytest.mark.parametrize("bad", [
+	[0],          # zero-size group
+	[1, 0],       # one of several is zero
+	[-1, 2],      # negative
+	[1, 1.5],     # float
+	[1, "2"],     # string
+	[1, True],    # bool — sneaky, isinstance(True, int) is True in plain Python
+])
+def test_validate_signal_groups_rejects_bad_values(bad):
+	with pytest.raises(ValueError, match="positive ints"):
+		_validate_signal_groups(bad)
+
+
+def test_validate_signal_groups_label_appears_in_message():
+	"""The `label` kwarg should surface in the error so a caller can
+	distinguish between a bad signal_groups vs a bad control_groups."""
+
+	with pytest.raises(ValueError, match="control_groups"):
+		_validate_signal_groups([], label='control_groups')
+
+
+# --------- PeakGenerator (with mocked extract_loci) -----------------------
+
+def _fake_extract_loci_factory(n=16, outlier_idx=None,
+		signal_count_template=None):
+	"""Build a stand-in for tangermeme's `extract_loci` that produces
+	deterministic tensors shaped to whatever signals/controls the
+	caller asked for. Stays decoupled from on-disk bigWigs.
+
+	Parameters
+	----------
+	n : int
+		Number of loci returned. Identical for peaks and negatives.
+	outlier_idx : int or None
+		If not None, the index whose signal counts are 10000x the rest.
+		Used to drive the outlier-filter tests.
+	signal_count_template : callable(channel_index) -> float or None
+		If given, channel `c` is filled with this constant; lets the
+		caller stage per-channel magnitudes.
+	"""
+
+	def fake(loci, sequences, signals, in_signals, chroms, in_window,
+			out_window, max_jitter, min_counts, max_counts, summits,
+			exclusion_lists, ignore, return_mask, verbose):
+		assert return_mask is True, "PeakGenerator always asks for masks"
+
+		n_signal_ch = len(signals) if signals is not None else 0
+		n_ctl_ch = len(in_signals) if in_signals is not None else 0
+		in_len = in_window + 2 * max_jitter
+		out_len = out_window + 2 * max_jitter
+
+		X = torch.zeros(n, 4, in_len)
+		y = torch.ones(n, n_signal_ch, out_len)
+		if signal_count_template is not None:
+			for c in range(n_signal_ch):
+				y[:, c, :] = signal_count_template(c)
+		if outlier_idx is not None and outlier_idx < n:
+			y[outlier_idx] *= 10_000
+		mask = torch.ones(n, dtype=torch.bool)
+
+		if in_signals is not None:
+			X_ctl = torch.zeros(n, n_ctl_ch, in_len)
+			return X, y, X_ctl, mask
+		return X, y, mask
+
+	return fake
+
+
+def _patch_extract_loci(fake):
+	# tangermeme.io.extract_loci is re-exported as
+	# cherimoya.io.extract_loci by the `from ... import extract_loci`
+	# at the top of io.py, so patch the *bound* name in cherimoya.io.
+	return mock.patch('cherimoya.io.extract_loci', side_effect=fake)
+
+
+def _minimal_peakgen_kwargs(**overrides):
+	"""Smallest set of kwargs PeakGenerator needs once extract_loci is
+	mocked. Anything not relevant to the assertion is filled with a
+	zero/None placeholder."""
+	base = dict(
+		peaks="ignored.bed", negatives="ignored.bed",
+		sequences="ignored.fa", signals=None, controls=None,
+		chroms=None, in_window=16, out_window=8, max_jitter=0,
+		negative_ratio=0, reverse_complement=False, shuffle=False,
+		num_workers=0, batch_size=2, verbose=False,
+	)
+	base.update(overrides)
+	return base
+
+
+def test_peak_generator_threads_structured_signals_into_sampler():
+	"""A grouped signals spec should produce a sampler whose
+	signal_perm matches `channel_permutation_from_groups` for those
+	groups."""
+
+	with _patch_extract_loci(_fake_extract_loci_factory()):
+		loader = PeakGenerator(**_minimal_peakgen_kwargs(
+			signals=["atac.bw", ["ctcf.+.bw", "ctcf.-.bw"]]))
+
+	expected = channel_permutation_from_groups([1, 2])
+	assert torch.equal(loader.dataset.signal_perm, expected)
+
+
+def test_peak_generator_signal_groups_disagrees_raises():
+	"""Explicit signal_groups must match what the signals shape
+	implies. Otherwise the user is silently saying contradictory
+	things and downstream RC would be wrong."""
+
+	with _patch_extract_loci(_fake_extract_loci_factory()):
+		with pytest.raises(ValueError, match="disagrees"):
+			PeakGenerator(**_minimal_peakgen_kwargs(
+				signals=[["plus.bw", "minus.bw"]],
+				signal_groups=[1, 1]))
+
+
+def test_peak_generator_control_groups_disagrees_raises():
+	with _patch_extract_loci(_fake_extract_loci_factory()):
+		with pytest.raises(ValueError, match="disagrees"):
+			PeakGenerator(**_minimal_peakgen_kwargs(
+				signals=["atac.bw"],
+				controls=[["plus.bw", "minus.bw"]],
+				control_groups=[1, 1]))
+
+
+def test_peak_generator_dict_signals_default_to_all_unstranded():
+	"""When signals is a list of dicts (the in-memory shortcut),
+	PeakGenerator can't infer grouping. With no explicit signal_groups
+	it defaults to one unstranded group per dict — matching the
+	flat-list semantics."""
+
+	dict_signals = [{}, {}, {}]
+	with _patch_extract_loci(_fake_extract_loci_factory()):
+		loader = PeakGenerator(**_minimal_peakgen_kwargs(
+			signals=dict_signals))
+
+	# All groups size 1 -> permutation is identity.
+	assert torch.equal(loader.dataset.signal_perm,
+		torch.tensor([0, 1, 2], dtype=torch.long))
+
+
+def test_peak_generator_dict_signals_with_explicit_groups():
+	"""With explicit signal_groups the dict-input path uses them
+	verbatim, as long as the sum matches the channel count."""
+
+	dict_signals = [{}, {}, {}]
+	with _patch_extract_loci(_fake_extract_loci_factory()):
+		loader = PeakGenerator(**_minimal_peakgen_kwargs(
+			signals=dict_signals, signal_groups=[1, 2]))
+
+	expected = channel_permutation_from_groups([1, 2])
+	assert torch.equal(loader.dataset.signal_perm, expected)
+
+
+def test_peak_generator_dict_signals_groups_sum_mismatch_raises():
+	dict_signals = [{}, {}, {}]
+	with _patch_extract_loci(_fake_extract_loci_factory()):
+		with pytest.raises(ValueError, match="signal_groups sum"):
+			PeakGenerator(**_minimal_peakgen_kwargs(
+				signals=dict_signals, signal_groups=[1, 1]))
+
+
+def test_peak_generator_rejects_non_str_non_list_entries():
+	"""A user-mistake input like [42, 'a.bw'] should fail at the
+	PeakGenerator boundary, not silently fall through to the
+	dict-handling path."""
+
+	with _patch_extract_loci(_fake_extract_loci_factory()):
+		with pytest.raises(TypeError):
+			PeakGenerator(**_minimal_peakgen_kwargs(
+				signals=[42, "a.bw"]))
+
+
+# --------- M8: per-modality outlier filtering ------------------------------
+
+def test_peak_generator_single_group_outlier_matches_legacy():
+	"""For a single signal group the per-group filter is identical to
+	the legacy "sum-across-everything" filter. We construct an N-locus
+	tensor with one extreme outlier and confirm exactly one locus is
+	dropped, matching the old contract."""
+
+	N = 32
+	fake = _fake_extract_loci_factory(n=N, outlier_idx=3)
+
+	with _patch_extract_loci(fake):
+		loader = PeakGenerator(**_minimal_peakgen_kwargs(
+			signals=["atac.bw"]))
+
+	# The outlier is filtered out of the peak set.
+	assert loader.dataset.peak_signals.shape[0] == N - 1
+
+
+def test_peak_generator_per_group_outlier_or_logic():
+	"""With two signal groups of wildly different baseline magnitudes,
+	an outlier in *either* group should be dropped — and an outlier
+	in one group must not survive just because the other group's
+	scale doesn't see it as one. Two outliers in different groups
+	therefore filter exactly two loci."""
+
+	N = 32
+
+	# Channel 0 baseline = 1, channel 1 baseline = 100. Both have
+	# their own outlier, at separate indices.
+	def fake(loci, sequences, signals, in_signals, chroms, in_window,
+			out_window, max_jitter, min_counts, max_counts, summits,
+			exclusion_lists, ignore, return_mask, verbose):
+		y = torch.ones(N, 2, out_window)
+		y[:, 1, :] = 100.0
+		y[5, 0, :] = 1_000_000.0    # outlier in group 0 only
+		y[19, 1, :] = 100_000_000.0  # outlier in group 1 only
+		X = torch.zeros(N, 4, in_window)
+		mask = torch.ones(N, dtype=torch.bool)
+		return X, y, mask
+
+	with _patch_extract_loci(fake):
+		loader = PeakGenerator(**_minimal_peakgen_kwargs(
+			signals=["a.bw", "b.bw"]))
+
+	# Both outliers should be filtered; legacy behavior would've
+	# missed the lower-magnitude one because it'd be drowned out.
+	assert loader.dataset.peak_signals.shape[0] == N - 2
 
 
 @pytest.mark.parametrize("groups,expected_perm", [

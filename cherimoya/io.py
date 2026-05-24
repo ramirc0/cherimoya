@@ -8,6 +8,44 @@ import torch
 from tangermeme.io import extract_loci
 
 
+def _validate_signal_groups(groups, label='signal_groups'):
+	"""Validate a signal-group spec used by the model, loss, and data path.
+
+	Every entry must be a positive integer (size 0 is meaningless — a
+	group with no channels can't be permuted, summed, or matched
+	against a count head) and the list itself must be non-empty (an
+	empty list means "zero output channels", which would produce a
+	degenerate model). Raises a ``ValueError`` with a clear message
+	naming the bad value so the user can fix the JSON or kwarg.
+
+
+	Parameters
+	----------
+	groups : sequence
+		The candidate ``signal_groups`` / ``control_groups`` value to
+		validate.
+
+	label : str, optional
+		The kwarg or field name to mention in the error message — lets
+		the same helper produce useful errors from different call sites
+		(``signal_groups``, ``control_groups``, etc.). Default is
+		``'signal_groups'``.
+	"""
+
+	if not isinstance(groups, (list, tuple)):
+		raise ValueError(
+			"{} must be a list of positive ints; got {!r}"
+			.format(label, groups))
+	if len(groups) == 0:
+		raise ValueError(
+			"{} must be non-empty; got an empty list".format(label))
+	for g in groups:
+		if (not isinstance(g, int)) or isinstance(g, bool) or g < 1:
+			raise ValueError(
+				"{} entries must be positive ints; got {!r} in {!r}"
+				.format(label, g, list(groups)))
+
+
 def normalize_signal_groups(signals):
 	"""Normalize a structured ``signals``/``controls`` spec into flat files.
 
@@ -109,6 +147,8 @@ def channel_permutation_from_groups(group_sizes):
 		Index tensor such that ``y[perm].flip(-1)`` is the correct RC of a
 		``(n, sum(group_sizes), L)`` signal tensor.
 	"""
+
+	_validate_signal_groups(group_sizes, label='group_sizes')
 
 	perm = []
 	offset = 0
@@ -522,11 +562,20 @@ def PeakGenerator(peaks, negatives, sequences, signals, controls=None,
 	def _resolve(spec, explicit_groups, label):
 		if spec is None:
 			return None, []
-		if isinstance(spec, (list, tuple)) and len(spec) > 0 and \
-				not isinstance(spec[0], (str, list, tuple)):
-			# List of per-chromosome dictionaries; pass through.
+		# A list of per-chromosome dicts (the in-memory shortcut some
+		# callers use to avoid bigWig IO) can't be parsed by
+		# `normalize_signal_groups`, so handle it explicitly. The
+		# isinstance check is tight on purpose — anything that isn't a
+		# dict, str, or sub-list is a user mistake (e.g. an int passed
+		# by accident) and is better surfaced here than 200 lines later
+		# inside `extract_loci`.
+		if isinstance(spec, (list, tuple)) and len(spec) > 0 \
+				and isinstance(spec[0], dict):
 			if explicit_groups is None:
 				explicit_groups = [1] * len(spec)
+			else:
+				_validate_signal_groups(explicit_groups,
+					label='{}_groups'.format(label))
 			if sum(explicit_groups) != len(spec):
 				raise ValueError(
 					"{}_groups sum ({}) does not match number of {} "
@@ -535,6 +584,8 @@ def PeakGenerator(peaks, negatives, sequences, signals, controls=None,
 			return list(spec), list(explicit_groups)
 		flat, groups = normalize_signal_groups(spec)
 		if explicit_groups is not None:
+			_validate_signal_groups(explicit_groups,
+				label='{}_groups'.format(label))
 			if list(explicit_groups) != groups:
 				raise ValueError(
 					"{}_groups={} disagrees with the grouping inferred "
@@ -556,10 +607,24 @@ def PeakGenerator(peaks, negatives, sequences, signals, controls=None,
 		max_counts=max_counts, summits=summits, exclusion_lists=exclusion_lists,
 		ignore=list('QWERYUIOPSDFHJKLZXVBNM'), return_mask=True, verbose=verbose)
 
-	loci_counts = X_peaks[1].sum(dim=(1, 2))
-
-	outlier_threshold = torch.quantile(X_peaks[1].sum(dim=(1, 2)), 0.99) * 1.2
-	outlier_idxs = loci_counts > outlier_threshold
+	# Per-modality outlier filtering. The legacy code summed across
+	# every channel and the full length to get a single per-locus
+	# total, then dropped loci above 1.2x the 99th-percentile total.
+	# That collapses biologically distinct modalities into one number
+	# — a stranded TF with peaks two orders of magnitude higher than a
+	# co-trained ATAC track would dominate the threshold and skew the
+	# filter for both. Compute one threshold per signal group and OR
+	# the per-group outlier masks: a locus that's an outlier in *any*
+	# group is dropped. For the common single-group case this reduces
+	# exactly to the legacy behavior.
+	peak_signals = X_peaks[1]
+	outlier_idxs = torch.zeros(peak_signals.shape[0], dtype=torch.bool)
+	offset = 0
+	for g in (signal_groups if signal_groups else [peak_signals.shape[1]]):
+		group_counts = peak_signals[:, offset:offset+g].sum(dim=(1, 2))
+		group_threshold = torch.quantile(group_counts, 0.99) * 1.2
+		outlier_idxs |= group_counts > group_threshold
+		offset += g
 
 	X_bg = extract_loci(loci=negatives, sequences=sequences,
 		signals=signals, in_signals=controls, chroms=chroms, in_window=in_window,

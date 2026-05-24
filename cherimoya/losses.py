@@ -13,6 +13,8 @@ import torch
 
 from bpnetlite.losses import MNLLLoss
 
+from .io import _validate_signal_groups
+
 
 def _mixture_loss(y, y_hat_logits, y_hat_logcounts, labels=None,
 		signal_groups=None):
@@ -80,6 +82,7 @@ def _mixture_loss(y, y_hat_logits, y_hat_logcounts, labels=None,
 	# given. The stranded ``(+, -)`` pair sums its two strands into a
 	# single per-group count, matching the per-group count head.
 	if signal_groups is not None:
+		_validate_signal_groups(signal_groups)
 		if sum(signal_groups) != y_per_track.shape[-1]:
 			raise ValueError(
 				"sum(signal_groups)={} does not match y.shape[1]={}"

@@ -39,13 +39,17 @@ def run(args):
 		sys.exit()
 
 	# Resolve grouped/flat signal specs into a flat list of files plus
-	# the per-group sizes. The flat list is what extract_loci and
-	# downstream tooling need; the group sizes determine the channel
-	# permutation used under RC and the number of count predictions.
+	# the per-group sizes. The flat list is what extract_loci and the
+	# `bam2bw`-style tooling need; the group sizes determine the
+	# channel permutation used under RC and the number of count
+	# predictions. We deliberately do NOT mutate ``parameters['signals']``
+	# here — the structured form (e.g. ``[[plus.bw, minus.bw]]``) is what
+	# the downstream evaluate JSON needs to re-parse the grouping
+	# correctly. Mutating to the flat form here would silently
+	# re-interpret a stranded pair as two unstranded channels in the
+	# evaluate step.
 	signal_files, signal_groups = normalize_signal_groups(parameters['signals'])
 	control_files, control_groups = normalize_signal_groups(parameters['controls'])
-	parameters['signals'] = signal_files
-	parameters['controls'] = control_files
 
 	if parameters['verbose']:
 		print("Training Chroms: ", parameters['training_chroms'])
@@ -86,8 +90,8 @@ def run(args):
 
 	valid_data = extract_loci(
 		sequences=parameters['sequences'],
-		signals=parameters['signals'],
-		in_signals=parameters['controls'],
+		signals=signal_files,
+		in_signals=control_files,
 		loci=parameters['loci'],
 		chroms=parameters['validation_chroms'],
 		in_window=parameters['in_window'],
@@ -110,9 +114,9 @@ def run(args):
 
 	###
 
-	if parameters['controls'] is not None:
+	if control_files is not None:
 		valid_sequences, valid_signals, valid_controls = valid_data
-		n_control_tracks = len(parameters['controls'])
+		n_control_tracks = len(control_files)
 	else:
 		valid_sequences, valid_signals = valid_data
 		valid_controls = None
