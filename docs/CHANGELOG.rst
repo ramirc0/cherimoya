@@ -114,6 +114,18 @@ Model (**breaking**)
   Pearson are computed, so a stranded pair contributes a single
   per-group target instead of one per strand.
 
+Training defaults
+~~~~~~~~~~~~~~~~~
+
+* The default backbone width ``n_filters`` is now 128 (was 96), so the
+  default 9-layer model has roughly 600K parameters (was ~340K). This
+  applies to the ``Cherimoya`` constructor and the ``fit_parameters``
+  defaults used by ``cherimoya fit`` / ``cherimoya pipeline``.
+* The default training ``batch_size`` is now 128 (was 64), in both the
+  ``Cherimoya.fit`` method and the CLI ``fit_parameters`` defaults. Both
+  the 128-filter, 128-batch defaults still fit comfortably on a 16 GB
+  GPU; reduce ``batch_size`` to 64 if you run out of GPU memory.
+
 v0.1.0
 ------
 

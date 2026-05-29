@@ -32,12 +32,12 @@ validation_chroms = ['chr8', 'chr20']
 
 
 default_fit_parameters = {
-	'n_filters': 96,
+	'n_filters': 128,
 	'n_layers': 9,
 	'expansion': 2,
 	'residual_scale': 0.15,
 	'name': None,
-	'batch_size': 64,
+	'batch_size': 128,
 	'in_window': 2114,
 	'out_window': 1000,
 	'max_jitter': 50,
@@ -208,11 +208,11 @@ default_pipeline_parameters = {
 
 	# Fit parameters
 	'fit_parameters': {
-		'n_filters': 96,
+		'n_filters': 128,
 		'n_layers': 9,
 		'expansion': 2,
 		'residual_scale': 0.15,
-		'batch_size': 64,
+		'batch_size': 128,
 		'muon_lr': 0.025,
 		'muon_wd': 0.03,
 		'adam_lr': 0.001,

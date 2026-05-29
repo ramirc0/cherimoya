@@ -130,10 +130,10 @@ Verifying the installation
    print(cherimoya.__version__)
 
    from cherimoya import Cherimoya
-   model = Cherimoya(n_filters=96, n_layers=9)
+   model = Cherimoya(n_filters=128, n_layers=9)
    print("Parameters:", sum(p.numel() for p in model.parameters()))
 
-The default 9-layer model has roughly 340K parameters. The package will
+The default 9-layer model has roughly 600K parameters. The package will
 import and the model will instantiate without a GPU; a CUDA device is
 only needed when you call ``.cuda()`` or pass tensors that live on a
 GPU.
@@ -142,15 +142,15 @@ GPU.
 Hardware expectations
 ---------------------
 
-The default 9-layer, 96-filter Cherimoya model is small (~340K
+The default 9-layer, 128-filter Cherimoya model is small (~600K
 parameters). The dominant memory cost during training is the
 activations and the optimizer state, not the parameters; both scale
 linearly with ``batch_size``, ``in_window``, and ``n_filters``.
 
 In practice:
 
-* The default training configuration (``batch_size=64``,
-  ``in_window=2114``, ``n_filters=96``, 9 layers) fits comfortably on
+* The default training configuration (``batch_size=128``,
+  ``in_window=2114``, ``n_filters=128``, 9 layers) fits comfortably on
   a 16 GB GPU.
 * Inference at ``batch_size=512`` (the CLI default) fits on the same
   hardware.
@@ -177,7 +177,7 @@ that the output shapes are right:
    import torch
    from cherimoya import Cherimoya
 
-   model = Cherimoya(n_filters=96, n_layers=9)
+   model = Cherimoya(n_filters=128, n_layers=9)
    if torch.cuda.is_available():
        model = model.cuda()
 

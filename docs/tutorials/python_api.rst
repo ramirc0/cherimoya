@@ -16,7 +16,7 @@ Creating a model
    from cherimoya import Cherimoya
 
    model = Cherimoya(
-       n_filters=96,              # backbone width
+       n_filters=128,             # backbone width
        n_layers=9,                # number of Cheri Blocks (dilations 1, 2, ..., 256)
        signal_groups=[2],         # one stranded (+, -) group; see below
        n_control_tracks=0,        # number of control input tracks
@@ -96,7 +96,7 @@ a ``torch.utils.data.DataLoader``:
        max_jitter=50,                       # peak-center jitter at training time
        negative_ratio=0.02,                 # n_negatives per n_peaks per epoch
        reverse_complement=True,             # augment with reverse complements
-       batch_size=64,
+       batch_size=128,
        num_workers=1,                       # async prefetch workers
        random_state=0,                      # base seed; reproducible
        verbose=True,                        # print progress and filter counts
@@ -219,7 +219,7 @@ Training
        X_ctl_valid=None,            # pass control tensors here if using controls
        y_valid=y_valid,
        max_epochs=20,
-       batch_size=64,
+       batch_size=128,
        early_stopping=5,            # stop after 5 epochs without count-Pearson gain
        dtype='float32',             # or 'bfloat16' for mixed precision via autocast
        device='cuda',

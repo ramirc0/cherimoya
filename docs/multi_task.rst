@@ -117,7 +117,7 @@ Python:
 
    from cherimoya import Cherimoya
 
-   model = Cherimoya(n_filters=96, n_layers=9).cuda()
+   model = Cherimoya(n_filters=128, n_layers=9).cuda()
 
    X = ...                                       # (N, 4, 2114) one-hot DNA
    y_profile, y_counts = model(X)
@@ -199,7 +199,7 @@ Python:
    from cherimoya import Cherimoya
 
    model = Cherimoya(
-       n_filters=96, n_layers=9,
+       n_filters=128, n_layers=9,
        signal_groups=[2],            # one stranded (+, -) pair
        n_control_tracks=2,           # stranded input control
    ).cuda()
@@ -300,7 +300,7 @@ Python:
    # (2 channels): three groups, five profile channels, three count
    # predictions.
    model = Cherimoya(
-       n_filters=96, n_layers=9,
+       n_filters=128, n_layers=9,
        signal_groups=[1, 2, 2],
        n_control_tracks=0,
    ).cuda()

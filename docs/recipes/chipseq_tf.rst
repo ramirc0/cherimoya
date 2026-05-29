@@ -61,7 +61,7 @@ Steps invoked, in order:
    (``ctcf.+.bw``, ``ctcf.-.bw``, ``ctcf.control.+.bw``,
    ``ctcf.control.-.bw``).
 3. GC-matched negative sampling (``ctcf.negatives.bed``).
-4. Train a 9-layer 96-filter Cherimoya model with
+4. Train a 9-layer 128-filter Cherimoya model with
    ``signal_groups=[2]`` (one stranded ``(+, -)`` group) and
    ``n_control_tracks=2``.
 5. Compute count attributions via saturation mutagenesis on the
@@ -87,8 +87,8 @@ If you want to deviate from defaults, edit the JSON before running
      - Default
      - When to change
    * - ``fit_parameters.n_filters``
-     - 96
-     - Smaller (64) for faster experiments; larger (128) for very
+     - 128
+     - Smaller (64) for faster experiments; larger (192) for very
        complex assays.
    * - ``fit_parameters.n_layers``
      - 9

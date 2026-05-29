@@ -62,7 +62,7 @@ Steps invoked, in order:
 2. ``bam2bw`` converts the BAM to an unstranded bigWig
    (``dnase_experiment.bw``).
 3. GC-matched negative sampling (``dnase_experiment.negatives.bed``).
-4. Train a 9-layer 96-filter Cherimoya model with
+4. Train a 9-layer 128-filter Cherimoya model with
    ``signal_groups=[1]`` and ``n_control_tracks=0``.
 5. Compute count attributions via saturation mutagenesis on the
    validation chromosomes.

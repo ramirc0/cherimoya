@@ -404,14 +404,14 @@ def test_cheri_block_no_grad_matches_grad_cuda(dtype, atol):
 
 @pytest.mark.cuda
 @pytest.mark.triton
-def test_cheri_block_no_grad_matches_grad_cuda_n_filters_96():
-	"""Production models default to n_filters=96 (hidden=192). Verify the
+def test_cheri_block_no_grad_matches_grad_cuda_n_filters_128():
+	"""Production models default to n_filters=128 (hidden=256). Verify the
 	inference path holds parity at the actual deployment width, since
 	autotuned kernels behave differently across shapes."""
 
 	torch.manual_seed(0)
-	block = CheriBlock(n_filters=96, dilation=4).cuda()
-	x = torch.randn(2, 256, 96, device='cuda')
+	block = CheriBlock(n_filters=128, dilation=4).cuda()
+	x = torch.randn(2, 256, 128, device='cuda')
 
 	y_grad = block(x)
 	with torch.no_grad():

@@ -260,7 +260,7 @@ Unspecified keys fall back to the fit-level defaults.
      - Default
      - Description
    * - ``n_filters``
-     - 96
+     - 128
      - Backbone channel width.
    * - ``n_layers``
      - 9
