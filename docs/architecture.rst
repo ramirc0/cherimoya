@@ -25,7 +25,7 @@ The model consists of three stages.
 1. **Input stem**. A 1D convolution (``kernel_size=21``, padding 10)
    maps the one-hot encoded DNA sequence (4 channels) into
    ``n_filters`` channels, followed by a GELU non-linearity. Default
-   ``n_filters`` is 96.
+   ``n_filters`` is 128.
 
 2. **Cheri-block backbone**. A stack of ``n_layers`` (default 9) Cheri
    Blocks with exponentially increasing dilation rates ``1, 2, 4, …,
@@ -40,7 +40,7 @@ The model consists of three stages.
    *group* (``len(signal_groups)`` total). A stranded ``(+, -)`` pair is
    one group, so its two strands share a single count target.
 
-The default 9-layer, 96-filter model has roughly 340K parameters. The
+The default 9-layer, 128-filter model has roughly 600K parameters. The
 default input window is 2114 bp and the default output window is 1000
 bp; the difference (557 bp on each side) is the ``trimming`` and equals
 ``46 + sum(2**i for i in range(n_layers))`` by default. The ``46`` is

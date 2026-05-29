@@ -38,7 +38,7 @@ Python API
    import torch
    from cherimoya import Cherimoya
 
-   model = Cherimoya(n_filters=96, n_layers=9).cuda()
+   model = Cherimoya(n_filters=128, n_layers=9).cuda()
    X = torch.randn(2, 4, 2114, device="cuda")
    with torch.no_grad():
        y_profile, y_counts = model(X)
@@ -53,7 +53,7 @@ group of two channels that share a count prediction — pass
 
 .. code-block:: python
 
-   model = Cherimoya(n_filters=96, n_layers=9, signal_groups=[2]).cuda()
+   model = Cherimoya(n_filters=128, n_layers=9, signal_groups=[2]).cuda()
    with torch.no_grad():
        y_profile, y_counts = model(X)
 

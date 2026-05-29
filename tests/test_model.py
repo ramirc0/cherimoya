@@ -25,7 +25,7 @@ def _input_window_for(model):
 
 def test_default_construction():
 	model = Cherimoya(verbose=False)
-	assert model.n_filters == 96
+	assert model.n_filters == 128
 	assert model.n_layers == 9
 	assert model.n_outputs == 1
 	assert model.n_control_tracks == 0

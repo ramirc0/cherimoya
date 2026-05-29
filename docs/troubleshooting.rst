@@ -21,7 +21,7 @@ peaks. As a rough guide:
   carefully.
 * 10,000+ peaks → default configuration is appropriate.
 * 50,000+ peaks → no special handling needed; larger models
-  (``n_filters=128``) become worth trying.
+  (``n_filters=192`` or ``256``) become worth trying.
 
 **Library depth.** Cherimoya needs enough reads per peak that the
 profile MNLL is informative. As a rough guide:
@@ -44,13 +44,13 @@ CUDA out of memory at the start of training
 Symptom: ``torch.cuda.OutOfMemoryError`` in the first or second
 training step.
 
-The default training batch size (64) and input window (2114 bp) fit
-comfortably on a 16 GB GPU at the default 9-layer, 96-filter model.
+The default training batch size (128) and input window (2114 bp) fit
+comfortably on a 16 GB GPU at the default 9-layer, 128-filter model.
 If you hit OOM, the fastest fixes:
 
-* Reduce ``fit_parameters.batch_size`` from 64 to 32 or 16.
+* Reduce ``fit_parameters.batch_size`` from 128 to 64 (or 32).
 * Use bf16 autocast: set ``fit_parameters.dtype`` to ``"bfloat16"``.
-* Shrink the model: ``fit_parameters.n_filters`` from 96 to 64 or 48.
+* Shrink the model: ``fit_parameters.n_filters`` from 128 to 64 or 48.
 
 GPU memory at training time is dominated by activations
 (``batch_size × in_window × n_filters × n_layers`` plus the
