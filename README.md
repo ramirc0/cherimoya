@@ -1,5 +1,6 @@
 <img src="https://github.com/jmschrei/cherimoya/blob/main/imgs/cherimoya.png">
 
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/cherimoya?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/cherimoya)
 [![PyPI Version](https://img.shields.io/pypi/v/cherimoya.svg)](https://pypi.org/project/cherimoya/)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/jmschrei/cherimoya/blob/main/LICENSE)
