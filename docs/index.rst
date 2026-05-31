@@ -135,6 +135,7 @@ measured numbers.
 
    api/model
    api/cheri
+   api/wrappers
    api/io
    api/losses
    api/performance

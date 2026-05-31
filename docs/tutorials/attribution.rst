@@ -51,15 +51,15 @@ Example JSON:
 ``output`` controls what is being attributed to:
 
 * ``"counts"`` — attribute to total predicted log-counts (recommended
-  for most analyses).
+  for most analyses; uses :class:`cherimoya.LogCountWrapper`).
 * ``"profile"`` — attribute to the predicted profile shape (uses
-  ``ProfileWrapper`` from ``bpnetlite``).
+  :class:`cherimoya.ProfileWrapper`).
 
 The CLI automatically:
 
 1. Loads sequences from ``loci`` on ``chroms`` and filters out any
    example containing an ``N`` over the input window.
-2. Wraps the model with ``bpnetlite.bpnet.ControlWrapper`` (passing
+2. Wraps the model with :class:`cherimoya.ControlWrapper` (passing
    zero controls if the model has none) and then with the chosen
    output wrapper.
 3. Runs ``tangermeme.saturation_mutagenesis.saturation_mutagenesis``
@@ -81,7 +81,9 @@ Computing attributions (Python)
 
    import torch
    from cherimoya import Cherimoya
-   from bpnetlite.bpnet import ControlWrapper, CountWrapper
+   from cherimoya import ControlWrapper
+   from cherimoya import LogCountWrapper
+   from cherimoya import ProfileWrapper
    from tangermeme.saturation_mutagenesis import saturation_mutagenesis
 
    model = Cherimoya.load("my_model.torch", device="cuda")
@@ -89,7 +91,7 @@ Computing attributions (Python)
    # ControlWrapper wraps the model so that .forward(X) returns just the
    # profile/counts tuple, supplying zero controls if the model has none.
    model = ControlWrapper(model)
-   wrapper = CountWrapper(model)   # use ProfileWrapper(...) to attribute to profile shape
+   wrapper = LogCountWrapper(model)   # use ProfileWrapper(...) to attribute to profile shape
 
    # ISM over the central 400 bp of each input sequence.
    mid = X.shape[-1] // 2

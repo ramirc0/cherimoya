@@ -48,7 +48,7 @@ def test_residual_scale_round_trips_through_save_load(tmp_path):
 		verbose=False)
 	path = tmp_path / "m.torch"
 	model.save(str(path))
-	loaded = Cherimoya.load(str(path))
+	loaded = Cherimoya.load(str(path), compile=False)
 	assert loaded.residual_scale == 0.42
 	for block in loaded.blocks:
 		assert block.residual_scale == 0.42
@@ -66,7 +66,7 @@ def test_expansion_round_trips_through_save_load(tmp_path):
 	model = Cherimoya(n_filters=8, n_layers=2, expansion=4, verbose=False)
 	path = tmp_path / "m.torch"
 	model.save(str(path))
-	loaded = Cherimoya.load(str(path))
+	loaded = Cherimoya.load(str(path), compile=False)
 	assert loaded.expansion == 4
 	for block in loaded.blocks:
 		assert block.linear1.out_features == 32
@@ -412,7 +412,7 @@ def test_save_load_roundtrip_preserves_predictions(tmp_path, small_model_kwargs)
 	path = tmp_path / "model.torch"
 	model.save(str(path))
 
-	loaded = Cherimoya.load(str(path)).eval()
+	loaded = Cherimoya.load(str(path), compile=False).eval()
 	assert loaded.n_filters == model.n_filters
 	assert loaded.n_layers == model.n_layers
 	got_profile, got_counts = loaded(X)
@@ -435,7 +435,7 @@ def test_load_to_specified_device(tmp_path, small_model_kwargs, device):
 	model = Cherimoya(**small_model_kwargs)
 	path = tmp_path / "model.torch"
 	model.save(str(path))
-	loaded = Cherimoya.load(str(path), device=device)
+	loaded = Cherimoya.load(str(path), device=device, compile=False)
 	# Check at least one parameter ended up on the requested device.
 	param = next(loaded.parameters())
 	assert param.device.type == device
@@ -485,7 +485,7 @@ def test_model_save_load_predictions_match_under_no_grad(tmp_path,
 
 	path = tmp_path / "model.torch"
 	model.save(str(path))
-	loaded = Cherimoya.load(str(path)).eval()
+	loaded = Cherimoya.load(str(path), compile=False).eval()
 
 	with torch.no_grad():
 		got_profile, got_counts = loaded(X)
@@ -576,7 +576,7 @@ def test_model_save_load_no_grad_matches_grad_cuda(tmp_path):
 
 	path = tmp_path / "model.torch"
 	model.save(str(path))
-	loaded = Cherimoya.load(str(path), device='cuda').eval()
+	loaded = Cherimoya.load(str(path), device='cuda', compile=False).eval()
 
 	with torch.no_grad():
 		got_profile, got_counts = loaded(X)

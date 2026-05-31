@@ -16,13 +16,13 @@ def run(args):
 	import numpy
 	import torch
 
-	from bpnetlite.bpnet import ControlWrapper
-	from bpnetlite.bpnet import CountWrapper
-	from bpnetlite.bpnet import ProfileWrapper
 	from tangermeme.io import extract_loci
 	from tangermeme.saturation_mutagenesis import saturation_mutagenesis
 
 	from cherimoya import Cherimoya
+	from cherimoya import ControlWrapper
+	from cherimoya import LogCountWrapper
+	from cherimoya import ProfileWrapper
 	from ..defaults import default_attribute_parameters
 	from ..utils import merge_parameters
 
@@ -51,7 +51,7 @@ def run(args):
 
 	model = ControlWrapper(model)
 	if parameters['output'] == 'counts':
-		wrapper = CountWrapper(model)
+		wrapper = LogCountWrapper(model)
 	elif parameters['output'] == 'profile':
 		wrapper = ProfileWrapper(model)
 	else:

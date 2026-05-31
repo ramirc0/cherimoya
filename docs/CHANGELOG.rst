@@ -178,6 +178,19 @@ API
 * :class:`cherimoya.cherimoya.EMA` is now a public top-level symbol
   alongside :class:`cherimoya.Cherimoya` and
   :class:`cherimoya.CheriBlock`.
+* Added a :mod:`cherimoya.wrappers` module exposing four public
+  wrappers: :class:`cherimoya.ControlWrapper`,
+  :class:`cherimoya.ProfileWrapper`, :class:`cherimoya.LogCountWrapper`,
+  and :class:`cherimoya.ExpectedCountsWrapper`. ``ControlWrapper`` and
+  ``ProfileWrapper`` are drop-in ports of the bpnet-lite wrappers;
+  ``LogCountWrapper`` returns the per-group log-counts; and
+  ``ExpectedCountsWrapper`` distributes each group's counts (``expm1``
+  of the log-count) across its channels and positions via a joint
+  softmax, so the expected counts summed over a group equal its
+  predicted count. ``cherimoya attribute`` and ``cherimoya marginalize``
+  now use these in place of ``bpnetlite``'s ``ControlWrapper``,
+  ``CountWrapper``, and ``ProfileWrapper``, so the subcommands no longer
+  import any wrappers from bpnet-lite.
 
 Training
 ~~~~~~~~

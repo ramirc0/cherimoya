@@ -85,9 +85,9 @@ are taken from ``pyproject.toml``.
      - Sequence loading, attribution (saturation mutagenesis), and
        seqlet extraction primitives.
    * - ``bpnet-lite`` (≥ 1.0.0)
-     - Multinomial NLL and log1p-MSE losses; ControlWrapper /
-       CountWrapper / ProfileWrapper helpers used by the attribute and
-       marginalize subcommands.
+     - The multinomial NLL profile loss (``MNLLLoss``) and training
+       ``Logger`` used during fitting, and ``marginalization_report``
+       used by the marginalize subcommand.
    * - ``macs3``
      - Peak calling, invoked by the ``pipeline`` subcommand.
    * - ``bam2bw`` (≥ 0.4.1)
