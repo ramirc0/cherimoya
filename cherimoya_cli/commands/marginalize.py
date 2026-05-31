@@ -16,11 +16,11 @@ def run(args):
 	import numpy
 	import torch
 
-	from bpnetlite.bpnet import ControlWrapper
 	from bpnetlite.marginalize import marginalization_report
 	from tangermeme.io import extract_loci
 
 	from cherimoya import Cherimoya
+	from cherimoya import ControlWrapper
 	from ..defaults import default_marginalize_parameters
 	from ..utils import merge_parameters
 

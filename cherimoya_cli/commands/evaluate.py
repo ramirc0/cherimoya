@@ -15,11 +15,11 @@ def run(args):
 
 	import torch
 
-	from bpnetlite.bpnet import ControlWrapper
 	from tangermeme.io import extract_loci
 	from tangermeme.predict import predict
 
 	from cherimoya import Cherimoya
+	from cherimoya import ControlWrapper
 	from cherimoya.io import normalize_signal_groups
 	from cherimoya.performance import calculate_performance_measures
 	from ..defaults import default_evaluate_parameters
