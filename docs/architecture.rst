@@ -43,7 +43,7 @@ The model consists of three stages.
    *group* (``len(signal_groups)`` total). A stranded ``(+, -)`` pair is
    one group, so its two strands share a single count target.
 
-The default 9-layer, 128-filter model has roughly 600K parameters. The
+The default 9-layer, 128-filter model has roughly 610K parameters. The
 default input window is 2114 bp and the default output window is 1000
 bp; the difference (557 bp on each side) is the ``trimming`` and equals
 ``46 + sum(2**i for i in range(n_layers))`` by default. The ``46`` is

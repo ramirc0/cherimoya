@@ -133,7 +133,7 @@ Verifying the installation
    model = Cherimoya(n_filters=128, n_layers=9)
    print("Parameters:", sum(p.numel() for p in model.parameters()))
 
-The default 9-layer model has roughly 600K parameters. The package will
+The default 9-layer model has roughly 610K parameters. The package will
 import and the model will instantiate without a GPU; a CUDA device is
 only needed when you call ``.cuda()`` or pass tensors that live on a
 GPU.
@@ -142,7 +142,7 @@ GPU.
 Hardware expectations
 ---------------------
 
-The default 9-layer, 128-filter Cherimoya model is small (~600K
+The default 9-layer, 128-filter Cherimoya model is small (~610K
 parameters). The dominant memory cost during training is the
 activations and the optimizer state, not the parameters; both scale
 linearly with ``batch_size``, ``in_window``, and ``n_filters``.

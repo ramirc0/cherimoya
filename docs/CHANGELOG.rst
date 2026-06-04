@@ -122,7 +122,9 @@ Model (**breaking**)
   the default ``trimming``. Checkpoints saved with the 1×1 head do not
   load — the ``fconv`` weight shape changed from ``(n_outputs,
   n_filters, 1)`` to ``(n_outputs, n_filters, 75)``; retrain with the
-  new head.
+  new head. For the default single-output model this adds ~9.5K
+  parameters (``128 * 75`` vs ``128``), bringing the default 9-layer,
+  128-filter model to ~610K parameters total.
 
 Training defaults
 ~~~~~~~~~~~~~~~~~

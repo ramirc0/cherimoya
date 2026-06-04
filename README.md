@@ -10,7 +10,7 @@
 > [!IMPORTANT]
 > Cherimoya is under active development and may introduce breaking changes between versions. Pin the version you train with if you need to reload checkpoints later.
 
-Cherimoya is a compact deep learning model for predicting genomic profile data — transcription factor binding, chromatin accessibility, transcription initiation — directly from DNA sequence. It pairs a lightweight ConvNeXt-style backbone with custom Triton GPU kernels for both training and inference, and ships with an end-to-end CLI that takes BAM files through peak calling, training, attribution, and motif discovery in a single command. The default 9-layer model is **~600K parameters** and runs a full forward in **under a millisecond per batch on an H200**, while delivering strong predictive performance across the assays we've benchmarked.
+Cherimoya is a compact deep learning model for predicting genomic profile data — transcription factor binding, chromatin accessibility, transcription initiation — directly from DNA sequence. It pairs a lightweight ConvNeXt-style backbone with custom Triton GPU kernels for both training and inference, and ships with an end-to-end CLI that takes BAM files through peak calling, training, attribution, and motif discovery in a single command. The default 9-layer model is **~610K parameters** and runs a full forward in **under a millisecond per batch on an H200**, while delivering strong predictive performance across the assays we've benchmarked.
 
 <img src="https://github.com/jmschrei/cherimoya/blob/main/imgs/cheri-model.png">
 
