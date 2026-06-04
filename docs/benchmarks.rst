@@ -9,7 +9,7 @@ Setup
 -----
 
 All numbers below were measured on a single NVIDIA H200 with PyTorch
-2.12 and Triton 3.5. Each measurement uses a warmup phase to lock in
+2.12 and Triton 3.7. Each measurement uses a warmup phase to lock in
 Triton autotune configurations before the timed iterations begin;
 reported numbers are the median over 50-100 iterations.
 
@@ -39,48 +39,48 @@ training mode but called under ``torch.no_grad()``.
    * - N=16
      - fp32
      - 0.101
-     - **0.062**
-     - 0.079 (+27%)
+     - **0.065**
+     - 0.080 (+24%)
    * -
      - bf16
-     - 0.101
-     - **0.061**
-     - 0.067 (+10%)
+     - 0.104
+     - **0.062**
+     - 0.068 (+9%)
    * -
      - fp16
      - 0.102
-     - **0.060**
-     - 0.066 (+9%)
+     - **0.062**
+     - 0.068 (+10%)
    * - N=64
      - fp32
-     - 0.198
-     - **0.075**
-     - 0.083 (+11%)
+     - 0.199
+     - **0.074**
+     - 0.081 (+10%)
    * -
      - bf16
-     - 0.109
-     - **0.060**
-     - 0.066 (+10%)
+     - 0.108
+     - **0.062**
+     - 0.069 (+10%)
    * -
      - fp16
-     - 0.109
-     - **0.060**
-     - 0.065 (+9%)
+     - 0.107
+     - **0.062**
+     - 0.068 (+10%)
    * - N=512
      - fp32
-     - 1.340
-     - **0.499**
-     - 0.509 (+2%)
+     - 1.337
+     - **0.498**
+     - 0.505 (+2%)
    * -
      - bf16
-     - 0.708
+     - 0.707
      - **0.347**
-     - 0.348 (+1%)
+     - 0.349 (+1%)
    * -
      - fp16
-     - 0.711
+     - 0.706
      - **0.347**
-     - 0.356 (+3%)
+     - 0.353 (+2%)
 
 The megakernel is dispatched automatically whenever
 ``torch.is_grad_enabled()`` is ``False`` and the MLP hidden width
@@ -89,8 +89,8 @@ megakernel path, also call ``.eval()`` on the model: this
 materializes the bf16 weight cast as a non-persistent buffer once,
 outside the compiled forward, so the cast is reused across calls
 instead of being recomputed every call. At small batch (N≤64) the
-no-eval inline-cast path adds ~9-27%; at production batch (N=512)
-the overhead is ~1-3% because the per-call cast cost is a fixed
+no-eval inline-cast path adds ~9-24%; at production batch (N=512)
+the overhead is ~1-2% because the per-call cast cost is a fixed
 ~15 μs while the megakernel runtime scales with the batch. Training
 is unaffected by the eval cache — it only fires under no_grad.
 

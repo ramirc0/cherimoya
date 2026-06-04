@@ -56,9 +56,9 @@ Per-call latency (ms) on an NVIDIA H200 for a single Cheri Block at `N=512, L=10
 
 | dtype | training-fwd | megakernel |
 |---|---|---|
-| fp32 | 1.340 | **0.499** |
-| bf16 | 0.708 | **0.347** |
-| fp16 | 0.711 | **0.347** |
+| fp32 | 1.337 | **0.498** |
+| bf16 | 0.707 | **0.347** |
+| fp16 | 0.706 | **0.347** |
 
 All paths agree on the fp32 model output to within ~1e-5 max-abs, so existing trained checkpoints produce numerically equivalent predictions through training-fwd and the megakernel paths. Training is unaffected by the eval cache — the megakernel only fires under no_grad. A pure-PyTorch CPU fallback is also available for development and one-off evaluation on a laptop; only training and high-throughput inference benefit from a GPU. See [the benchmarks page](https://cherimoya.readthedocs.io/en/latest/benchmarks.html) for small-batch breakdowns and full methodology.
 
