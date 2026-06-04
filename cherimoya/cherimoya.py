@@ -180,7 +180,7 @@ class Cherimoya(torch.nn.Module):
 		])
 
 		self.fconv = torch.nn.Conv1d(n_filters+n_control_tracks,
-			self.n_outputs, kernel_size=1, padding=0)
+			self.n_outputs, kernel_size=75, padding=37)
 
 		n_count_control = 1 if n_control_tracks > 0 else 0
 		self.linear = torch.nn.Linear(n_filters+n_count_control, self.n_groups)
@@ -395,7 +395,7 @@ class Cherimoya(torch.nn.Module):
 
 	def fit(self, training_data, muon_optimizer, adam_optimizer, lw_optimizer,
 		muon_scheduler, adam_scheduler, lw_scheduler, X_valid, X_ctl_valid,
-		y_valid, max_epochs=50, batch_size=128, dtype='float32', device='cuda',
+		y_valid, max_epochs=50, batch_size=192, dtype='float32', device='cuda',
 		early_stopping=None):
 		"""Fit the model to data and validate it periodically.
 
@@ -461,7 +461,7 @@ class Cherimoya(torch.nn.Module):
 			number of times that `training_data` is exhausted. Default is 50.
 
 		batch_size: int, optional
-			The number of examples to include in each batch. Default is 128.
+			The number of examples to include in each batch. Default is 192.
 
 		dtype: str or torch.dtype
 			The torch.dtype to use when training. Usually, this will be torch.float32

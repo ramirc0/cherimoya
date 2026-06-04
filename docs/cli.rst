@@ -272,7 +272,7 @@ Unspecified keys fall back to the fit-level defaults.
      - 0.15
      - Fixed residual scalar.
    * - ``batch_size``
-     - 64
+     - 192
      - Training batch size.
    * - ``muon_lr``
      - 0.025
@@ -301,7 +301,7 @@ Unspecified keys fall back to the fit-level defaults.
      - Number of epochs over which the LR is linearly warmed up from
        1% of its target before cosine decay begins.
    * - ``negative_ratio``
-     - 0.02
+     - 0.25
      - Negatives per peak per epoch.
    * - ``num_workers``
      - 1
@@ -311,7 +311,7 @@ Unspecified keys fall back to the fit-level defaults.
      - Stop after N consecutive epochs with no validation count
        Pearson improvement.
    * - ``max_jitter``
-     - 50
+     - 500
      - Maximum jitter (bp) for peak centers at training time.
    * - ``reverse_complement``
      - ``true``

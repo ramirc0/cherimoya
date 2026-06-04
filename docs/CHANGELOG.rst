@@ -113,6 +113,18 @@ Model (**breaking**)
   true counts are pooled per group before the count loss / count
   Pearson are computed, so a stranded pair contributes a single
   per-group target instead of one per strand.
+* The profile head (``fconv``) is now a 75-bp convolution
+  (``kernel_size=75``, padding 37) instead of a 1×1 pointwise
+  convolution. The padding keeps it length-preserving, so the output
+  window is still ``in_window - 2 * trimming`` and stays positionally
+  aligned with the target; the wider kernel gives the head a local
+  receptive field (37 bp each side) that matches the ``46`` constant in
+  the default ``trimming``. Checkpoints saved with the 1×1 head do not
+  load — the ``fconv`` weight shape changed from ``(n_outputs,
+  n_filters, 1)`` to ``(n_outputs, n_filters, 75)``; retrain with the
+  new head. For the default single-output model this adds ~9.5K
+  parameters (``128 * 75`` vs ``128``), bringing the default 9-layer,
+  128-filter model to ~610K parameters total.
 
 Training defaults
 ~~~~~~~~~~~~~~~~~
@@ -121,10 +133,18 @@ Training defaults
   default 9-layer model has roughly 600K parameters (was ~340K). This
   applies to the ``Cherimoya`` constructor and the ``fit_parameters``
   defaults used by ``cherimoya fit`` / ``cherimoya pipeline``.
-* The default training ``batch_size`` is now 128 (was 64), in both the
-  ``Cherimoya.fit`` method and the CLI ``fit_parameters`` defaults. Both
-  the 128-filter, 128-batch defaults still fit comfortably on a 16 GB
-  GPU; reduce ``batch_size`` to 64 if you run out of GPU memory.
+* The default training ``batch_size`` is now 192 (was 128), in both the
+  ``Cherimoya.fit`` method, the ``cherimoya.io.PeakGenerator`` generator,
+  and the CLI ``fit_parameters`` defaults. The 128-filter, 192-batch
+  defaults still fit comfortably on a 16 GB GPU; reduce ``batch_size`` to
+  128 or 64 if you run out of GPU memory.
+* The default ``negative_ratio`` is now 0.25 (was 0.02), in both the
+  ``cherimoya.io.PeakGenerator`` generator and the CLI ``fit_parameters``
+  defaults, sampling more GC-matched background loci per peak each epoch.
+* The default ``max_jitter`` for fitting is now 500 bp (was 50), in both
+  the ``cherimoya.io.PeakGenerator`` generator and the CLI
+  ``fit_parameters`` defaults. The jitter is absorbed by the flank
+  between the default ``in_window`` (2114) and ``out_window`` (1000).
 
 v0.1.0
 ------

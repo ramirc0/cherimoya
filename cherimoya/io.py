@@ -402,10 +402,10 @@ class PeakNegativeSampler(torch.utils.data.Dataset):
 
 
 def PeakGenerator(peaks, negatives, sequences, signals, controls=None,
-	chroms=None, in_window=2114, out_window=1000, max_jitter=50,
-	negative_ratio=0.1, reverse_complement=True, shuffle=True, min_counts=None,
+	chroms=None, in_window=2114, out_window=1000, max_jitter=500,
+	negative_ratio=0.25, reverse_complement=True, shuffle=True, min_counts=None,
 	max_counts=None, summits=False, exclusion_lists=None, random_state=None,
-	pin_memory=True, num_workers=1, batch_size=32, verbose=False,
+	pin_memory=True, num_workers=1, batch_size=192, verbose=False,
 	signal_groups=None, control_groups=None):
 	"""This is a constructor function that handles all IO.
 
@@ -473,7 +473,7 @@ def PeakGenerator(peaks, negatives, sequences, signals, controls=None,
 
 	max_jitter: int, optional
 		The maximum amount of jitter to add, in either direction, to the
-		midpoints that are passed in. Default is 50.
+		midpoints that are passed in. Default is 500.
 
 	negative_ratio: float, optional
 		The ratio of negatives compared to peaks in each batch. A value of 1 means
@@ -531,7 +531,7 @@ def PeakGenerator(peaks, negatives, sequences, signals, controls=None,
 		the same data for any given index.
 
 	batch_size: int, optional
-		The number of data elements per batch. Default is 32.
+		The number of data elements per batch. Default is 192.
 
 	verbose: bool, optional
 		Whether to display a progress bar while loading. Default is False.

@@ -10,7 +10,7 @@
 > [!IMPORTANT]
 > Cherimoya is under active development and may introduce breaking changes between versions. Pin the version you train with if you need to reload checkpoints later.
 
-Cherimoya is a compact deep learning model for predicting genomic profile data — transcription factor binding, chromatin accessibility, transcription initiation — directly from DNA sequence. It pairs a lightweight ConvNeXt-style backbone with custom Triton GPU kernels for both training and inference, and ships with an end-to-end CLI that takes BAM files through peak calling, training, attribution, and motif discovery in a single command. The default 9-layer model is **~600K parameters** and runs a full forward in **under a millisecond per batch on an H200**, while delivering strong predictive performance across the assays we've benchmarked.
+Cherimoya is a compact deep learning model for predicting genomic profile data — transcription factor binding, chromatin accessibility, transcription initiation — directly from DNA sequence. It pairs a lightweight ConvNeXt-style backbone with custom Triton GPU kernels for both training and inference, and ships with an end-to-end CLI that takes BAM files through peak calling, training, attribution, and motif discovery in a single command. The default 9-layer model is **~610K parameters** and runs a full forward in **under a millisecond per batch on an H200**, while delivering strong predictive performance across the assays we've benchmarked.
 
 <img src="https://github.com/jmschrei/cherimoya/blob/main/imgs/cheri-model.png">
 
@@ -56,9 +56,9 @@ Per-call latency (ms) on an NVIDIA H200 for a single Cheri Block at `N=512, L=10
 
 | dtype | training-fwd | megakernel |
 |---|---|---|
-| fp32 | 1.340 | **0.499** |
-| bf16 | 0.708 | **0.347** |
-| fp16 | 0.711 | **0.347** |
+| fp32 | 1.337 | **0.498** |
+| bf16 | 0.707 | **0.347** |
+| fp16 | 0.706 | **0.347** |
 
 All paths agree on the fp32 model output to within ~1e-5 max-abs, so existing trained checkpoints produce numerically equivalent predictions through training-fwd and the megakernel paths. Training is unaffected by the eval cache — the megakernel only fires under no_grad. A pure-PyTorch CPU fallback is also available for development and one-off evaluation on a laptop; only training and high-throughput inference benefit from a GPU. See [the benchmarks page](https://cherimoya.readthedocs.io/en/latest/benchmarks.html) for small-batch breakdowns and full methodology.
 
