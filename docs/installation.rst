@@ -149,7 +149,7 @@ linearly with ``batch_size``, ``in_window``, and ``n_filters``.
 
 In practice:
 
-* The default training configuration (``batch_size=128``,
+* The default training configuration (``batch_size=192``,
   ``in_window=2114``, ``n_filters=128``, 9 layers) fits comfortably on
   a 16 GB GPU.
 * Inference at ``batch_size=512`` (the CLI default) fits on the same

@@ -121,10 +121,18 @@ Training defaults
   default 9-layer model has roughly 600K parameters (was ~340K). This
   applies to the ``Cherimoya`` constructor and the ``fit_parameters``
   defaults used by ``cherimoya fit`` / ``cherimoya pipeline``.
-* The default training ``batch_size`` is now 128 (was 64), in both the
-  ``Cherimoya.fit`` method and the CLI ``fit_parameters`` defaults. Both
-  the 128-filter, 128-batch defaults still fit comfortably on a 16 GB
-  GPU; reduce ``batch_size`` to 64 if you run out of GPU memory.
+* The default training ``batch_size`` is now 192 (was 128), in both the
+  ``Cherimoya.fit`` method, the ``cherimoya.io.PeakGenerator`` generator,
+  and the CLI ``fit_parameters`` defaults. The 128-filter, 192-batch
+  defaults still fit comfortably on a 16 GB GPU; reduce ``batch_size`` to
+  128 or 64 if you run out of GPU memory.
+* The default ``negative_ratio`` is now 0.25 (was 0.02), in both the
+  ``cherimoya.io.PeakGenerator`` generator and the CLI ``fit_parameters``
+  defaults, sampling more GC-matched background loci per peak each epoch.
+* The default ``max_jitter`` for fitting is now 500 bp (was 50), in both
+  the ``cherimoya.io.PeakGenerator`` generator and the CLI
+  ``fit_parameters`` defaults. The jitter is absorbed by the flank
+  between the default ``in_window`` (2114) and ``out_window`` (1000).
 
 v0.1.0
 ------

@@ -91,11 +91,13 @@ Two parameters are worth checking after a first training run:
   setting this. The default ``PeakGenerator`` filter already drops
   peaks above ``1.2 × the 99th percentile`` of summed counts; setting
   ``max_counts`` adds an explicit ceiling on top of that.
-* ``fit_parameters.max_jitter`` — the default of 50 is conservative.
-  ATAC-seq peaks are typically wide enough that 128 is also safe and
-  improves training-set diversity. Match this with ``in_window``
-  large enough to absorb the jitter (``in_window`` is 2114 by
-  default; ``max_jitter`` ≤ 128 fits comfortably).
+* ``fit_parameters.max_jitter`` — the default of 500 bp randomly
+  shifts peak centers each epoch, which improves training-set
+  diversity; ATAC-seq peaks are typically wide enough to tolerate
+  this. The jitter is absorbed by the flank between ``in_window`` and
+  ``out_window`` (2114 and 1000 by default, leaving ~557 bp each
+  side), so the default fits comfortably; lower it if you shrink
+  ``in_window``.
 
 
 Outputs

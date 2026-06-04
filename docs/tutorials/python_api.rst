@@ -93,10 +93,10 @@ a ``torch.utils.data.DataLoader``:
        chroms=["chr2", "chr4", "chr5"],     # training chromosomes
        in_window=2114,
        out_window=1000,
-       max_jitter=50,                       # peak-center jitter at training time
-       negative_ratio=0.02,                 # n_negatives per n_peaks per epoch
+       max_jitter=500,                      # peak-center jitter at training time
+       negative_ratio=0.25,                 # n_negatives per n_peaks per epoch
        reverse_complement=True,             # augment with reverse complements
-       batch_size=128,
+       batch_size=192,
        num_workers=1,                       # async prefetch workers
        random_state=0,                      # base seed; reproducible
        verbose=True,                        # print progress and filter counts
@@ -219,7 +219,7 @@ Training
        X_ctl_valid=None,            # pass control tensors here if using controls
        y_valid=y_valid,
        max_epochs=20,
-       batch_size=128,
+       batch_size=192,
        early_stopping=5,            # stop after 5 epochs without count-Pearson gain
        dtype='float32',             # or 'bfloat16' for mixed precision via autocast
        device='cuda',

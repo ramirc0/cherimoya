@@ -44,11 +44,11 @@ CUDA out of memory at the start of training
 Symptom: ``torch.cuda.OutOfMemoryError`` in the first or second
 training step.
 
-The default training batch size (128) and input window (2114 bp) fit
+The default training batch size (192) and input window (2114 bp) fit
 comfortably on a 16 GB GPU at the default 9-layer, 128-filter model.
 If you hit OOM, the fastest fixes:
 
-* Reduce ``fit_parameters.batch_size`` from 128 to 64 (or 32).
+* Reduce ``fit_parameters.batch_size`` from 192 to 128 (or 64).
 * Use bf16 autocast: set ``fit_parameters.dtype`` to ``"bfloat16"``.
 * Shrink the model: ``fit_parameters.n_filters`` from 128 to 64 or 48.
 
