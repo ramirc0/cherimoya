@@ -1,6 +1,19 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+Training defaults
+~~~~~~~~~~~~~~~~~
+
+* The default training ``batch_size`` is now 64 (was 192), in the
+  ``Cherimoya.fit`` method, the ``cherimoya.io.PeakGenerator`` generator,
+  and the CLI ``fit_parameters`` defaults used by ``cherimoya fit`` /
+  ``cherimoya pipeline``. The smaller batch lowers the training-time
+  memory footprint; reduce ``batch_size`` further to 32 or 16 if you
+  still run out of GPU memory.
+
 v0.1.1
 ------
 
