@@ -405,7 +405,7 @@ def PeakGenerator(peaks, negatives, sequences, signals, controls=None,
 	chroms=None, in_window=2114, out_window=1000, max_jitter=500,
 	negative_ratio=0.25, reverse_complement=True, shuffle=True, min_counts=None,
 	max_counts=None, summits=False, exclusion_lists=None, random_state=None,
-	pin_memory=True, num_workers=1, batch_size=192, verbose=False,
+	pin_memory=True, num_workers=1, batch_size=64, verbose=False,
 	signal_groups=None, control_groups=None):
 	"""This is a constructor function that handles all IO.
 
@@ -531,7 +531,7 @@ def PeakGenerator(peaks, negatives, sequences, signals, controls=None,
 		the same data for any given index.
 
 	batch_size: int, optional
-		The number of data elements per batch. Default is 192.
+		The number of data elements per batch. Default is 64.
 
 	verbose: bool, optional
 		Whether to display a progress bar while loading. Default is False.

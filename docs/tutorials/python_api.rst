@@ -96,7 +96,7 @@ a ``torch.utils.data.DataLoader``:
        max_jitter=500,                      # peak-center jitter at training time
        negative_ratio=0.25,                 # n_negatives per n_peaks per epoch
        reverse_complement=True,             # augment with reverse complements
-       batch_size=192,
+       batch_size=64,
        num_workers=1,                       # async prefetch workers
        random_state=0,                      # base seed; reproducible
        verbose=True,                        # print progress and filter counts
@@ -219,7 +219,7 @@ Training
        X_ctl_valid=None,            # pass control tensors here if using controls
        y_valid=y_valid,
        max_epochs=20,
-       batch_size=192,
+       batch_size=64,
        early_stopping=5,            # stop after 5 epochs without count-Pearson gain
        dtype='float32',             # or 'bfloat16' for mixed precision via autocast
        device='cuda',

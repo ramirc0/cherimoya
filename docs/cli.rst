@@ -272,7 +272,7 @@ Unspecified keys fall back to the fit-level defaults.
      - 0.15
      - Fixed residual scalar.
    * - ``batch_size``
-     - 192
+     - 64
      - Training batch size.
    * - ``muon_lr``
      - 0.025
