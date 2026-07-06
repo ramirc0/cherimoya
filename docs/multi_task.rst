@@ -185,12 +185,15 @@ they swap under reverse-complement augmentation as a unit.
 ``+``, channel 1 = ``-``), ``(N, 2, out_window)``. One count
 prediction (the shared per-locus total), ``(N, 1)``.
 
-**Loss.** The two per-channel profile MNLLs are averaged into one
-per-group profile loss before Kendall-Gal weighting, so this
-configuration contributes one profile-loss term and one
-count-loss term — the same number of loss terms as the unstranded
-case. The Kendall-Gal weight tensors ``lw0`` and ``lw1`` are each
-shape ``(1,)``.
+**Loss.** The group's two strands are scored as a **single joint
+multinomial** — the ``+`` and ``-`` channels are concatenated and one
+``log_softmax`` is taken over the flattened ``channels * length`` — giving
+one per-group profile loss before Kendall-Gal weighting. Normalizing the
+strands together (rather than independently) makes their relative
+magnitude part of the trained objective. This configuration therefore
+contributes one profile-loss term and one count-loss term — the same
+number of loss terms as the unstranded case. The Kendall-Gal weight
+tensors ``lw0`` and ``lw1`` are each shape ``(1,)``.
 
 Python:
 

@@ -118,11 +118,12 @@ Data pipeline (**breaking**)
   to which modality.
 * Every signal group now contributes one term to the loss
   regardless of how many channels it has. ``_mixture_loss``'s
-  profile component is averaged within each group (so a stranded
-  ``(+, -)`` pair's two per-strand MNLLs combine into one
-  per-group profile loss) before Kendall-Gal weighting; ``lw0``
-  drops from shape ``(sum(signal_groups),)`` to
-  ``(len(signal_groups),)``, matching ``lw1``. The summary log's
+  profile component combined a stranded ``(+, -)`` pair's two
+  per-strand MNLLs into one per-group profile loss before
+  Kendall-Gal weighting (this per-channel averaging was later
+  replaced by a joint per-group multinomial — see the Unreleased
+  entry above); ``lw0`` drops from shape ``(sum(signal_groups),)``
+  to ``(len(signal_groups),)``, matching ``lw1``. The summary log's
   ``Validation Profile Pearson`` now reports the mean over groups
   of (mean over the group's channels) so the headline metric
   agrees with the loss weighting — no double-counting of stranded
