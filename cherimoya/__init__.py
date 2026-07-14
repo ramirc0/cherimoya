@@ -9,4 +9,4 @@ from .wrappers import ProfileWrapper
 from .wrappers import LogCountWrapper
 from .wrappers import ExpectedCountsWrapper
 
-__version__ = '0.1.1'
+__version__ = '0.2.0'
