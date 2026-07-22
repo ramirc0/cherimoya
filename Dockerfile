@@ -21,6 +21,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS main
 
+LABEL org.opencontainers.image.title=cherimoya
+LABEL org.opencontainers.image.source=https://github.com/jmschrei/cherimoya
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
