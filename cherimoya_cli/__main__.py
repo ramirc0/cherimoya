@@ -104,7 +104,11 @@ def _dispatch(command, argv):
 		i = argv.index("-p")
 		ConfigStore.instance().store(group="run", name="user",
 			node=OmegaConf.load(argv[i + 1]), package="_global_")
-		argv = argv[:i] + argv[i + 2:] + ["+run=user"]
+		argv = argv[:i] + argv[i + 2:]
+		# Hydra takes one unbroken run of overrides, so join it.
+		overrides = [j for j, arg in enumerate(argv)
+			if "=" in arg and not arg.startswith("-")]
+		argv.insert(overrides[0] if overrides else 0, "+run=user")
 
 	sys.argv = ["cherimoya " + command] + argv
 	hydra.main(version_base="1.3", config_path="pkg://cherimoya_cli.conf",
