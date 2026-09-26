@@ -138,7 +138,7 @@ def run(cfg):
 		return
 
 	# Set before any data is loaded, so that PyTorch starts its thread pool
-	# at this size; see the note on `num_threads` in defaults.py.
+	# at this size; see the note on `num_threads` in config.py.
 	if parameters["num_threads"] is not None:
 		torch.set_num_threads(parameters["num_threads"])
 

@@ -1,75 +1,12 @@
 # cherimoya_cli utilities
 # Author: Jacob Schreiber <jmschreiber91@gmail.com>
 
-import copy
 import os
-import json
 
 
 # Config keys that name input files, across every command's schema.
 INPUT_KEYS = ("sequences", "loci", "negatives", "signals", "controls",
 	"motifs", "exclusion_lists", "model", "peaks", "fasta", "bigwig")
-
-
-def _extract_set(parameters, defaults, name):
-	subparameters = {
-		key: parameters.get(key, None) for key in defaults if key in parameters
-	}
-
-	for parameter, value in parameters[name].items():
-		if value is not None:
-			subparameters[parameter] = value
-
-	return subparameters
-
-
-def _check_set(parameters, parameter, value):
-	if parameters.get(parameter, None) == None:
-		parameters[parameter] = value
-
-
-def merge_parameters(parameters, default_parameters):
-	"""Merge the provided parameters with the default parameters.
-
-
-	Parameters
-	----------
-	parameters: str
-		Name of the JSON folder with the provided parameters
-
-	default_parameters: dict
-		The default parameters for the operation.
-
-
-	Returns
-	-------
-	params: dict
-		The merged set of parameters.
-	"""
-
-	if isinstance(parameters, str):
-		if not os.path.exists(parameters):
-			raise FileNotFoundError("Parameter file not found: '{}'"
-				.format(parameters))
-
-		with open(parameters, "r") as infile:
-			parameters = json.load(infile)
-
-	# Keys whose default is None and which may simply be left out.
-	unset_parameters = ("controls", "warning_threshold", "early_stopping",
-		"exclusion_lists", "loss_weights", "model", "motifs", "progress_bar")
-	for parameter, value in default_parameters.items():
-		if parameter not in parameters:
-			if value is None and parameter not in unset_parameters:
-				raise ValueError("Must provide value for '{}'. Set it to "
-					"null if this step is supposed to produce it."
-					.format(parameter))
-
-			# A copy, so that a caller writing into a nested dict does not
-			# change the defaults for the next run in the same process.
-			parameters[parameter] = copy.deepcopy(value)
-
-	return parameters
 
 
 def resolve_inputs(cfg):

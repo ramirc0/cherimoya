@@ -12,6 +12,58 @@
 # `PipelineConfig` gives each step a node whose defaults interpolate the
 # shared top-level keys, so `name=x` or `in_window=3000` reaches every step
 # and `fit.batch_size=32` changes only one.
+#
+# A note on `signals` / `controls`:
+#
+# These accept either a flat list of file paths or a structured list
+# whose entries are each ``str`` (a one-channel unstranded group) or
+# ``list[str]`` (a multi-channel group such as a stranded ``(+, -)``
+# pair). The grouping decides how reverse-complement augmentation
+# permutes channels and how many predictions the count head emits.
+# Examples::
+#
+#     signals: [atac.bw]
+#         # one unstranded group, one count prediction
+#
+#     signals: [[ctcf.+.bw, ctcf.-.bw]]
+#         # one stranded group, one count prediction shared across +/-
+#
+#     signals: [atac.bw, [ctcf.+.bw, ctcf.-.bw]]
+#         # one unstranded group + one stranded group; two count predictions
+#
+# A flat list of N files is interpreted as N independent unstranded
+# groups. BPNet-style callers that pass ``[plus.bw, minus.bw]`` as a
+# stranded pair must use the nested form ``[[plus.bw, minus.bw]]`` to keep
+# the +/- swap on RC.
+#
+# A note on `random_state`:
+#
+# Training is seeded by default so that a run can be repeated: the seed
+# fixes the model's initialization and the peak/negative sampler's draw
+# order. Set it to any other integer to get an independent run -- rerunning
+# the same config unchanged reproduces the same model rather than giving an
+# independent replicate. Setting it to null does not turn seeding off; it
+# means "draw a seed and print it". The pipeline also records the drawn
+# seed in `<name>.fit.yaml`.
+#
+# Seeding does not make CUDA training bitwise reproducible. The fused
+# conv+norm kernel reduces with relaxed atomics, so the summation order
+# varies between launches, and two same-seed GPU runs diverge as training
+# compounds that difference. What the seed fixes is the initialization and
+# the sequence of examples, not the arithmetic. CPU runs with the same seed
+# are bitwise identical.
+
+# A note on `num_threads`:
+#
+# This is the number of threads PyTorch gives CPU operations in each
+# process `fit` runs, one per device; PyTorch gives each DataLoader worker
+# one whatever this is set to.
+# A GPU fit does little CPU work in that process, loading the data and
+# computing the validation measures each epoch. On a machine with many
+# cores, PyTorch's default of one thread per physical core runs that work
+# slower than a few threads do, and takes those cores from other jobs.
+# Training on the CPU needs more: raise it, or set it to null to keep
+# PyTorch's default.
 
 from dataclasses import dataclass, field
 from typing import Any, List, Optional

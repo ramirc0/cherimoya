@@ -163,6 +163,29 @@ def test_pipeline_is_dispatched_to_hydra(tmp_path, monkeypatch):
 	assert cfg.attribute.sequences == str(tmp_path / "g.fa")
 
 
+def test_cfg_job_prints_a_template_for_p(tmp_path, monkeypatch, capsys):
+	"""`--cfg job` replaces `pipeline-json`: it prints the composed config
+	without running anything, and the printed YAML runs as a `-p` file."""
+
+	for name in ("g.fa", "a.bw"):
+		(tmp_path / name).write_text("")
+	monkeypatch.chdir(tmp_path)
+
+	with mock.patch("cherimoya_cli.commands.pipeline.run") as run:
+		_main(monkeypatch, "pipeline", "name=demo", "sequences=g.fa",
+			"signals=[a.bw]", "loci=null", "negatives=null",
+			"fit.n_filters=64", "--cfg", "job")
+		run.assert_not_called()
+
+		path = _yaml(tmp_path, capsys.readouterr().out)
+		_main(monkeypatch, "pipeline", "-p", path)
+
+	cfg = run.call_args.args[0]
+	assert cfg.fit.n_filters == 64
+	assert cfg.fit.name == "demo"
+	assert cfg.loci is None
+
+
 def test_version(monkeypatch, capsys):
 	from cherimoya_cli.__main__ import __version__
 

@@ -1,14 +1,10 @@
 """Tests for the Hydra config schemas in cherimoya_cli.config."""
 
-import copy
-
 import pytest
 from hydra.errors import ConfigCompositionException
 from omegaconf import OmegaConf
 
-import cherimoya_cli.defaults as D
 from cherimoya_cli.config import missing_keys
-from cherimoya_cli.utils import _check_set, _extract_set, merge_parameters
 
 
 REQUIRED = {
@@ -89,95 +85,62 @@ def test_a_single_run_writes_into_the_working_directory():
 	assert cfg.hydra.output_subdir == ".hydra/fit"
 
 
-# --------- parity with the JSON defaults ----------------------------------
-#
-# Transitional: these compare against cherimoya_cli.defaults and the JSON
-# merge helpers, and go away with them.
+# --------- what each pipeline step inherits -------------------------------
 
-JSON_DEFAULTS = {
-	"fit": D.default_fit_parameters,
-	"evaluate": D.default_evaluate_parameters,
-	"attribute": D.default_attribute_parameters,
-	"seqlets": D.default_seqlet_parameters,
-	"marginalize": D.default_marginalize_parameters,
-}
-
-
-@pytest.mark.parametrize("command", sorted(JSON_DEFAULTS))
-def test_schema_defaults_match_the_json_defaults(make_config, command):
-	cfg = make_config(command, *REQUIRED[command])
-	schema = OmegaConf.to_container(cfg)
-	defaults = JSON_DEFAULTS[command]
-
-	# evaluate reads `negatives`, which the JSON defaults do not declare.
-	assert set(schema) - set(defaults) <= {"negatives"}
-	assert set(defaults) <= set(schema)
-
-	for key, value in defaults.items():
-		if value is not None:
-			assert schema[key] == value, key
-
-
-def _json_pipeline():
-	parameters = copy.deepcopy(D.default_pipeline_parameters)
-	parameters.update(name="demo", sequences="g.fa", loci=["p.bed"],
-		negatives=["n.bed"], signals=["s.bw"], motifs="m.meme", model="m.torch",
-		random_state=7)
-	return parameters
-
-
-def _json_step(parameters, step):
-	"""Build a step's parameters the way the JSON pipeline does."""
-
-	pname = parameters["name"]
-	if step == "fit":
-		sub = _extract_set(parameters, D.default_fit_parameters, "fit_parameters")
-		return merge_parameters(sub, D.default_fit_parameters)
-
-	if step == "attribute":
-		sub = _extract_set(parameters, D.default_attribute_parameters,
-			"attribute_parameters")
-		_check_set(sub, "ohe_filename", pname + ".attributions.ohe.npz")
-		_check_set(sub, "attr_filename", pname + ".attributions.attr.npz")
-		_check_set(sub, "idx_filename", pname + ".attributions.idxs.npy")
-		return merge_parameters(sub, D.default_attribute_parameters)
-
-	if step == "seqlets":
-		attribute = _json_step(parameters, "attribute")
-		sub = _extract_set(parameters, D.default_seqlet_parameters,
-			"seqlet_parameters")
-		_check_set(sub, "ohe_filename", pname + ".attributions.ohe.npz")
-		_check_set(sub, "attr_filename", pname + ".attributions.attr.npz")
-		_check_set(sub, "idx_filename", pname + ".attributions.idxs.npy")
-		_check_set(sub, "output_filename", pname + ".seqlets.bed")
-		_check_set(sub, "chroms", attribute["chroms"])
-		return merge_parameters(sub, D.default_seqlet_parameters)
-
-	sub = _extract_set(parameters, D.default_marginalize_parameters,
-		"marginalize_parameters")
-	sub["loci"] = parameters["marginalize_parameters"]["loci"] or parameters[
-		"negatives"]
-	_check_set(sub, "output_filename", pname + "_marginalize/")
-	_check_set(sub, "motifs", parameters["motifs"])
-	return merge_parameters(sub, D.default_marginalize_parameters)
-
-
-@pytest.mark.parametrize("step", ["fit", "attribute", "seqlets", "marginalize"])
-def test_pipeline_steps_match_the_json_pipeline(make_config, step):
+def _pipeline(make_config):
 	# `model` is set as it is by the time attribute and marginalize run.
-	cfg = make_config("pipeline", *REQUIRED["pipeline"], "motifs=m.meme",
+	return make_config("pipeline", *REQUIRED["pipeline"], "motifs=m.meme",
 		"model=m.torch", "random_state=7")
 
-	assert _resolved(cfg[step]) == _json_step(_json_pipeline(), step)
+
+def test_pipeline_fit_names_its_outputs_after_the_run(make_config):
+	fit = _resolved(_pipeline(make_config).fit)
+
+	assert fit["name"] == "demo"
+	assert fit["random_state"] == 7
+	# The shared `batch_size` (512) is sized for inference.
+	assert fit["batch_size"] == 64
 
 
-def test_pipeline_annotation_and_modisco_match_the_json_pipeline(make_config):
+def test_pipeline_seqlets_read_what_attribute_writes(make_config):
+	cfg = _resolved(_pipeline(make_config))
+	attribute, seqlets = cfg["attribute"], cfg["seqlets"]
+
+	assert attribute["ohe_filename"] == "demo.attributions.ohe.npz"
+	assert attribute["attr_filename"] == "demo.attributions.attr.npz"
+	assert attribute["idx_filename"] == "demo.attributions.idxs.npy"
+	for key in ("ohe_filename", "attr_filename", "idx_filename", "chroms"):
+		assert seqlets[key] == attribute[key], key
+	assert seqlets["output_filename"] == "demo.seqlets.bed"
+
+
+def test_pipeline_marginalize_inherits_the_shared_keys(make_config):
+	marginalize = _resolved(_pipeline(make_config).marginalize)
+
+	assert marginalize["model"] == "m.torch"
+	assert marginalize["motifs"] == "m.meme"
+	assert marginalize["output_filename"] == "demo_marginalize/"
+	assert marginalize["batch_size"] == 512
+	assert marginalize["random_state"] == 7
+
+
+def test_pipeline_marginalize_runs_on_the_negatives(make_config):
+	"""Motifs are inserted into background loci, so marginalize takes the
+	negatives unless `marginalize.loci` names its own."""
+
+	cfg = _pipeline(make_config)
+	assert OmegaConf.to_container(cfg.marginalize)["loci"] == "${negatives}"
+	assert _resolved(cfg.marginalize)["loci"] == ["n.bed"]
+
+
+def test_pipeline_annotation_and_modisco(make_config):
 	cfg = make_config("pipeline", *REQUIRED["pipeline"], "motifs=m.meme")
 
-	assert _resolved(cfg.annotation) == dict(
-		D.default_annotation_parameters, sequences="g.fa", motifs="m.meme",
-		seqlet_filename="demo.seqlets.bed",
-		output_filename="demo.seqlets_annotated.bed")
+	assert _resolved(cfg.annotation) == {"sequences": "g.fa",
+		"seqlet_filename": "demo.seqlets.bed", "motifs": "m.meme",
+		"n_score_bins": 100, "n_median_bins": 1000, "n_target_bins": 100,
+		"n_cache": 250, "reverse_complement": True, "n_jobs": -1,
+		"output_filename": "demo.seqlets_annotated.bed", "skip": False}
 	assert _resolved(cfg.modisco_motifs) == {"n_seqlets": 100000,
 		"output_filename": "demo_modisco_results.h5", "verbose": True}
 	assert _resolved(cfg.modisco_report) == {"motifs": "m.meme",
