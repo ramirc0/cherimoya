@@ -71,3 +71,16 @@ def engines(monkeypatch):
 
 	monkeypatch.setattr("cherimoya.deep_lift_shap.Engine", counting)
 	return built
+
+
+@pytest.fixture
+def make_config():
+	"""Compose a command's packaged Hydra config with `key=value` overrides."""
+	import cherimoya_cli.config  # noqa: F401 -- registers the schemas
+	from hydra import compose, initialize_config_module
+
+	def build(command, *overrides):
+		with initialize_config_module("cherimoya_cli.conf", version_base="1.3"):
+			return compose(command, list(overrides))
+
+	return build

@@ -1,0 +1,4 @@
+defaults:
+  - pipeline_schema
+  - settings
+  - _self_
