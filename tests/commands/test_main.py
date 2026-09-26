@@ -60,6 +60,27 @@ def test_file_and_overrides_compose(tmp_path, monkeypatch, seqlets_inputs):
 	assert cfg.max_seqlet_len == 25
 
 
+@pytest.mark.parametrize("flag", ["-m", "--cfg job"])
+def test_a_flag_after_the_overrides_keeps_the_file(tmp_path, monkeypatch,
+		capsys, seqlets_inputs, flag):
+	"""Hydra takes one unbroken run of overrides, so a flag typed after
+	them must not split the file's layer from the rest."""
+
+	path = _yaml(tmp_path, "loci: x.bed\nohe_filename: a.ohe.npz\n"
+		"attr_filename: a.attr.npz\nidx_filename: a.idx.npy\n"
+		"min_seqlet_len: 6\n")
+
+	_main(monkeypatch, "seqlets", "-p", path, "threshold=0.5", *flag.split())
+
+	if flag == "-m":
+		cfg = seqlets_inputs.call_args.args[0]
+	else:
+		from omegaconf import OmegaConf
+
+		cfg = OmegaConf.create(capsys.readouterr().out)
+	assert (cfg.threshold, cfg.min_seqlet_len) == (0.5, 6)
+
+
 def test_inputs_are_made_absolute(tmp_path, monkeypatch, seqlets_inputs):
 	_main(monkeypatch, "seqlets", "loci=x.bed", "ohe_filename=a.ohe.npz",
 		"attr_filename=a.attr.npz", "idx_filename=a.idx.npy")
