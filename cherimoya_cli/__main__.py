@@ -20,6 +20,7 @@ except PackageNotFoundError:
 # Commands configured by Hydra; the rest still parse their own arguments.
 HYDRA_COMMANDS = {
 	"negatives": "Sample GC-matched negatives.",
+	"fit": "Fit a Cherimoya model.",
 	"evaluate": "Evaluate a trained Cherimoya model.",
 	"attribute": "Calculate attributions using a trained Cherimoya model, "
 		"with DeepLIFT/SHAP (default) or saturation mutagenesis.",
@@ -136,16 +137,6 @@ def _setup_parsers() -> argparse.ArgumentParser:
 		help="Whether to scale the read counts. 1 is no scaling.",
 	)
 
-	# Fit
-	fit_parser = subparsers.add_parser("fit", help="Fit a Cherimoya model.")
-	fit_parser.add_argument(
-		"-p",
-		"--parameters",
-		type=str,
-		required=True,
-		help="A JSON file containing the parameters for fitting the model.",
-	)
-
 	# Pipeline
 	pipeline_parser = subparsers.add_parser(
 		"pipeline", help="Run each step on the given files."
@@ -238,7 +229,6 @@ def main():
 
 	COMMANDS = {
 		"pipeline-json": "pipeline_json",
-		"fit": "fit",
 		"pipeline": "pipeline",
 		"install-skill": "install_skill",
 	}

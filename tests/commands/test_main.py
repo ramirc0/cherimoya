@@ -124,6 +124,25 @@ def test_the_command_receives_its_own_config(tmp_path, monkeypatch):
 	assert cfg.beta == 0.7
 
 
+def test_fit_is_dispatched_to_hydra(tmp_path, monkeypatch):
+	"""Grouped signals keep their nesting, and every path in them is made
+	absolute."""
+
+	for name in ("g.fa", "p.bed", "n.bed", "a.bw", "c.+.bw", "c.-.bw"):
+		(tmp_path / name).write_text("")
+	monkeypatch.chdir(tmp_path)
+
+	with mock.patch("cherimoya_cli.commands.fit.run") as run:
+		_main(monkeypatch, "fit", "name=demo", "sequences=g.fa",
+			"loci=p.bed", "negatives=n.bed", "signals=[a.bw,[c.+.bw,c.-.bw]]",
+			"n_filters=64")
+
+	cfg = run.call_args.args[0]
+	assert cfg.n_filters == 64
+	assert list(cfg.signals[1]) == [str(tmp_path / "c.+.bw"),
+		str(tmp_path / "c.-.bw")]
+
+
 def test_version(monkeypatch, capsys):
 	from cherimoya_cli.__main__ import __version__
 

@@ -13,25 +13,11 @@ import json
 import pytest
 
 
-def _write(tmp_path, name, cfg):
-	path = tmp_path / "{}.json".format(name)
-	with open(path, "w") as f:
-		json.dump(cfg, f)
-	return str(path)
-
-
-def _skip_cfg(defaults, **overrides):
-	cfg = dict(defaults)
-	cfg["skip"] = True
-	cfg.update(overrides)
-	return cfg
-
-
 ##
 
 
-@pytest.mark.parametrize("command", ["evaluate", "attribute", "seqlets",
-	"marginalize"])
+@pytest.mark.parametrize("command", ["fit", "evaluate", "attribute",
+	"seqlets", "marginalize"])
 def test_skip_returns_rather_than_exiting(command):
 	"""Every subcommand that honours `skip` must return, so the caller
 	decides what happens next."""
@@ -51,15 +37,6 @@ def test_skip_returns_rather_than_exiting(command):
 
 	# Returns None rather than raising SystemExit.
 	assert mod.run(cfg) is None
-
-
-def test_fit_skip_returns_rather_than_exiting(tmp_path):
-	from cherimoya_cli import defaults as D
-	from cherimoya_cli.commands import fit
-
-	path = _write(tmp_path, "fit", _skip_cfg(D.default_fit_parameters))
-
-	assert fit.run(argparse.Namespace(parameters=path)) is None
 
 
 def test_pipeline_without_motifs_returns(run_pipeline):

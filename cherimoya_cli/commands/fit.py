@@ -87,12 +87,26 @@ def _loss_balance_summary(loss_weights, lw_lr, lw_wd, lw_momentum):
 	)
 
 
-def run(args):
-	import copy
+def run(cfg):
+	"""Train a model, then evaluate it on the validation and test
+	chromosomes.
+
+	Each evaluate config is saved as `<name>.<split>.evaluate.yaml` next
+	to the model, where `<split>` is `validation` or `test`, so either
+	evaluation can be rerun with `cherimoya evaluate -p`.
+
+
+	Parameters
+	----------
+	cfg: omegaconf.DictConfig
+		A config typed by `cherimoya_cli.config.FitConfig`. A null
+		`random_state` is replaced by the seed drawn for the run.
+	"""
+
+	import dataclasses
 	import hashlib
 	import itertools
 	import os
-	import json
 
 	os.environ["TORCH_CUDNN_V8_API_ENABLED"] = "1"
 
@@ -104,20 +118,22 @@ def run(args):
 	from cherimoya import Cherimoya
 	from cherimoya.io import PeakGenerator, normalize_signal_groups
 	from cherimoya.training import fit
+	from omegaconf import OmegaConf
 
 	from tangermeme.io import _interleave_loci
 	from tangermeme.io import extract_loci
 
 	from . import evaluate as evaluate_cmd
-	from ..defaults import default_fit_parameters
-	from ..utils import _json_config, merge_parameters
+	from ..config import EvaluateConfig
 
 	# With more than one device, Lightning starts every rank after the
 	# first by re-running this command, so everything up to the fit runs
 	# once per rank. Only rank 0 prints.
 	say = rank_zero_only(print)
 
-	parameters = merge_parameters(args.parameters, default_fit_parameters)
+	# Plain Python values, for the libraries downstream.
+	parameters = OmegaConf.to_container(cfg, resolve=True,
+		throw_on_missing=True)
 	if parameters["skip"]:
 		return
 
@@ -129,21 +145,19 @@ def run(args):
 		shared = sorted(set(chroms_a) & set(chroms_b))
 		if shared:
 			raise ValueError("{} and {} share {}. Give each chromosome to at "
-				"most one split, or set test_chroms to null to skip the test "
+				"most one split, or set test_chroms=null to skip the test "
 				"evaluation.".format(a, b, shared))
 
 	# Resolve the seed before anything draws from an RNG. A null
 	# `random_state` means "pick one and tell me" rather than "stay
 	# unseeded": the run still varies between invocations, but the seed
-	# that produced it is printed and written into the evaluate JSONs, so
-	# the run can be repeated afterwards. Drawing it here and storing it
-	# back into `parameters` is what puts it in those JSONs, which are
-	# deepcopies of this dict. The ranks Lightning launches after the first
-	# read rank 0's draw from `PL_GLOBAL_SEED`, which `seed_everything`
-	# sets before they start; rank 0 itself always draws, so a value left
-	# in the environment by an earlier run in the same process is ignored.
-	# Under `srun` every rank starts at once, so there is no draw to
-	# inherit, and each derives the same seed from the job step instead.
+	# that produced it is printed, so the run can be repeated afterwards.
+	# The ranks Lightning launches after the first read rank 0's draw from
+	# `PL_GLOBAL_SEED`, which `seed_everything` sets before they start;
+	# rank 0 itself always draws, so a value left in the environment by an
+	# earlier run in the same process is ignored. Under `srun` every rank
+	# starts at once, so there is no draw to inherit, and each derives the
+	# same seed from the job step instead.
 	if parameters["random_state"] is None:
 		seed = None
 		if int(os.environ.get("LOCAL_RANK", 0)) > 0:
@@ -152,19 +166,19 @@ def run(args):
 			step = "{}.{}".format(os.environ.get("SLURM_JOB_ID"),
 				os.environ.get("SLURM_STEP_ID", 0))
 			seed = int(hashlib.sha256(step.encode()).hexdigest(), 16) % (2**31 - 1)
-			say("Derived random_state={} from SLURM job step {}; set it in the "
-				"JSON to repeat this run.".format(seed, step))
+			say("Derived random_state={0} from SLURM job step {1}; set "
+				"random_state={0} to repeat this run.".format(seed, step))
 
 		if seed is None:
 			seed = int(numpy.random.randint(0, 2**31 - 1))
 
 			# Printed whether or not `verbose` is set: a drawn seed is
-			# the one part of the run that cannot be recovered afterwards
-			# if training dies before the evaluate JSONs are written.
-			say("Drew random_state={}; set it in the JSON to repeat this run."
-				.format(seed))
+			# the one part of the run that cannot be recovered afterwards.
+			say("Drew random_state={0}; set random_state={0} to repeat this "
+				"run.".format(seed))
 
 		parameters["random_state"] = int(seed)
+		cfg.random_state = parameters["random_state"]
 
 	# The sampler and the model each take the seed directly; this covers
 	# everything else that training touches.
@@ -175,8 +189,8 @@ def run(args):
 	# `bam2bw`-style tooling need; the group sizes determine the
 	# channel permutation used under RC and the number of count
 	# predictions. ``parameters`` keeps the structured form (e.g.
-	# ``[[plus.bw, minus.bw]]``) because the evaluate JSONs are copied from
-	# it, and evaluate reads the control grouping from there for
+	# ``[[plus.bw, minus.bw]]``) because the evaluate configs are copied
+	# from it, and evaluate reads the control grouping from there for
 	# reverse-complement averaging. The signal grouping it takes from the
 	# checkpoint.
 	signal_files, signal_groups = normalize_signal_groups(parameters["signals"])
@@ -374,20 +388,23 @@ def run(args):
 
 	model_name = parameters["name"] or model.name
 
+	# Only the keys evaluate declares carry over from the fit config.
+	evaluate_keys = {field.name for field in dataclasses.fields(EvaluateConfig)}
+
 	# The validation chromosomes chose the checkpoint, so only the test
 	# chromosomes give an estimate that took no part in training.
 	for split in ("validation", "test"):
 		if not parameters[split + "_chroms"]:
 			continue
 
-		evaluate_parameters = copy.deepcopy(parameters)
+		evaluate_parameters = {key: value for key, value in parameters.items()
+			if key in evaluate_keys}
 		evaluate_parameters["chroms"] = parameters[split + "_chroms"]
 		evaluate_parameters["model"] = model_name + ".torch"
 		evaluate_parameters["performance_filename"] = "{}.{}.performance.tsv".format(
 			model_name, split)
 
-		fname = "{}.{}.evaluate.json".format(model_name, split)
-		with open(fname, "w") as outfile:
-			outfile.write(json.dumps(evaluate_parameters, sort_keys=True, indent=4))
-
-		evaluate_cmd.run(_json_config("evaluate", evaluate_parameters))
+		evaluate_cfg = OmegaConf.structured(EvaluateConfig(**evaluate_parameters))
+		OmegaConf.save(evaluate_cfg, "{}.{}.evaluate.yaml".format(model_name,
+			split))
+		evaluate_cmd.run(evaluate_cfg)

@@ -4,35 +4,27 @@
 """Wiring tests for `cherimoya fit` — confirms parameters flow into the
 right downstream calls without actually training."""
 
-import argparse
-import json
 from unittest import mock
 
 import pytest
+from omegaconf import OmegaConf
+
+
+def _fit_config(**overrides):
+	"""A fit config with fake inputs and every required key set."""
+	from cherimoya_cli.config import FitConfig
+
+	values = dict(sequences='fake.fa', loci='fake.bed',
+		negatives='fake_negatives.bed', signals=['fake.bw'],
+		name='fit_wiring_test', device='cpu')
+	values.update(overrides)
+	return OmegaConf.structured(FitConfig(**values))
 
 
 @pytest.fixture
-def fit_json(tmp_path):
-	"""Write a minimal JSON that satisfies merge_parameters' required keys."""
-	from cherimoya_cli.defaults import default_fit_parameters
-
-	# Include every key from the defaults so merge_parameters' "missing
-	# required" check passes (it errors when a key is absent and its
-	# default is None outside a small whitelist). Then override the
-	# values we care about for the test.
-	cfg = dict(default_fit_parameters)
-	cfg['sequences'] = 'fake.fa'
-	cfg['loci'] = 'fake.bed'
-	cfg['negatives'] = 'fake_negatives.bed'
-	cfg['signals'] = ['fake.bw']
-	cfg['name'] = 'fit_wiring_test'
-	cfg['device'] = 'cpu'
-	cfg['num_workers'] = 3   # the value we want to verify is forwarded
-	cfg['batch_size'] = 16
-
-	path = tmp_path / "fit.json"
-	path.write_text(json.dumps(cfg))
-	return str(path)
+def fit_cfg():
+	# The loader settings test_fit_forwards_the_loader_settings_* verifies.
+	return _fit_config(num_workers=3, batch_size=16)
 
 
 class _FakeDataset:
@@ -49,7 +41,7 @@ class _FakeLoader(list):
 	dataset = _FakeDataset()
 
 
-def _run_capturing_training_fit(fit_json, n_on_chroms=1):
+def _run_capturing_training_fit(cfg, n_on_chroms=1):
 	"""Run `fit.run` up to the training call and return its arguments.
 
 	Data loading is faked and `cherimoya.training.fit` raises once it has
@@ -88,17 +80,17 @@ def _run_capturing_training_fit(fit_json, n_on_chroms=1):
 				side_effect=fake_extract_loci), \
 			mock.patch("cherimoya.training.fit", side_effect=fake_fit):
 		with pytest.raises(_StopFit):
-			fit_cmd.run(argparse.Namespace(parameters=fit_json))
+			fit_cmd.run(cfg)
 
 	return captured
 
 
-def test_fit_forwards_the_loader_settings_to_training(fit_json):
+def test_fit_forwards_the_loader_settings_to_training(fit_cfg):
 	"""`num_workers` and `batch_size` go to the training module, which
 	builds the loader, and the dataset rather than PeakGenerator's loader
 	is what it receives."""
 
-	captured = _run_capturing_training_fit(fit_json)
+	captured = _run_capturing_training_fit(fit_cfg)
 
 	assert captured['num_workers'] == 3
 	assert captured['batch_size'] == 16
@@ -107,14 +99,12 @@ def test_fit_forwards_the_loader_settings_to_training(fit_json):
 
 @pytest.mark.parametrize("negatives,labels", [("fake_negatives.bed",
 	[1, 0, 0]), (None, None)])
-def test_fit_validates_on_the_negatives_too(fit_json, negatives, labels):
+def test_fit_validates_on_the_negatives_too(fit_cfg, negatives, labels):
 	"""The validation negatives follow the peaks and are labeled 0."""
 
-	cfg = json.loads(open(fit_json).read())
-	cfg['negatives'] = negatives
-	open(fit_json, 'w').write(json.dumps(cfg))
+	fit_cfg.negatives = negatives
 
-	captured = _run_capturing_training_fit(fit_json)
+	captured = _run_capturing_training_fit(fit_cfg)
 	X_valid, y_valid = captured['valid']
 	assert len(X_valid) == len(y_valid) == len(labels or [1])
 	if labels is None:
@@ -125,175 +115,126 @@ def test_fit_validates_on_the_negatives_too(fit_json, negatives, labels):
 
 @pytest.mark.parametrize("device,accelerator", [("cpu", "cpu"),
 	("cuda", "gpu")])
-def test_fit_maps_device_to_a_lightning_accelerator(fit_json, device,
+def test_fit_maps_device_to_a_lightning_accelerator(fit_cfg, device,
 	accelerator):
-	cfg = json.loads(open(fit_json).read())
-	cfg['device'] = device
-	cfg['devices'] = 2
-	open(fit_json, 'w').write(json.dumps(cfg))
+	fit_cfg.device = device
+	fit_cfg.devices = 2
 
-	captured = _run_capturing_training_fit(fit_json)
+	captured = _run_capturing_training_fit(fit_cfg)
 	assert captured['accelerator'] == accelerator
 	assert captured['devices'] == 2
 
 
 @pytest.mark.parametrize("value", [None, False, True])
-def test_fit_forwards_progress_bar(fit_json, value):
-	cfg = json.loads(open(fit_json).read())
-	cfg['progress_bar'] = value
-	open(fit_json, 'w').write(json.dumps(cfg))
+def test_fit_forwards_progress_bar(fit_cfg, value):
+	fit_cfg.progress_bar = value
 
-	assert _run_capturing_training_fit(fit_json)['progress_bar'] is value
+	assert _run_capturing_training_fit(fit_cfg)['progress_bar'] is value
 
 
-def test_fit_json_without_progress_bar_merges_to_none(tmp_path):
-	from cherimoya_cli.defaults import default_fit_parameters
-	from cherimoya_cli.utils import merge_parameters
-
-	cfg = dict(default_fit_parameters)
-	cfg.update(sequences='fake.fa', loci='fake.bed', negatives='fake.bed',
-		signals=['fake.bw'])
-	del cfg['progress_bar']
-	path = tmp_path / "fit.json"
-	path.write_text(json.dumps(cfg))
-
-	assert merge_parameters(str(path), default_fit_parameters)[
-		'progress_bar'] is None
-
-
-def test_fit_schedules_count_the_partial_batch(fit_json):
+def test_fit_schedules_count_the_partial_batch(fit_cfg):
 	"""8 examples in batches of 16 is one step per epoch for the schedule,
 	as a DataLoader counts it, with the default 2 warmup epochs and the
 	20,000-step floor stretching the run to 20,000 epochs."""
 
-	captured = _run_capturing_training_fit(fit_json)
+	captured = _run_capturing_training_fit(fit_cfg)
 	assert captured['n_warmup_steps'] == 2
 	assert captured['max_epochs'] == 20000
 	assert captured['n_decay_steps'] == 20000 - 2
 
 
-def test_fit_launched_ranks_inherit_the_drawn_seed(fit_json, monkeypatch):
+def test_fit_launched_ranks_inherit_the_drawn_seed(fit_cfg, monkeypatch):
 	"""A rank Lightning launches after the first re-runs `fit`, and must
 	use the seed rank 0 drew rather than drawing its own."""
 
-	cfg = json.loads(open(fit_json).read())
-	cfg['random_state'] = None
-	open(fit_json, 'w').write(json.dumps(cfg))
+	fit_cfg.random_state = None
 
 	monkeypatch.setenv("LOCAL_RANK", "1")
 	monkeypatch.setenv("PL_GLOBAL_SEED", "1234")
 
-	captured = _run_capturing_training_fit(fit_json)
+	captured = _run_capturing_training_fit(fit_cfg)
 	assert captured['peak_generator']['random_state'] == 1234
 
 
-def test_fit_first_rank_ignores_a_seed_left_in_the_environment(fit_json,
+def test_fit_first_rank_ignores_a_seed_left_in_the_environment(fit_cfg,
 	monkeypatch, capsys):
-	cfg = json.loads(open(fit_json).read())
-	cfg['random_state'] = None
-	open(fit_json, 'w').write(json.dumps(cfg))
+	fit_cfg.random_state = None
 
 	monkeypatch.delenv("LOCAL_RANK", raising=False)
 	monkeypatch.setenv("PL_GLOBAL_SEED", "1234")
 
-	captured = _run_capturing_training_fit(fit_json)
+	captured = _run_capturing_training_fit(fit_cfg)
 	drawn = captured['peak_generator']['random_state']
 	assert "Drew random_state={}".format(drawn) in capsys.readouterr().out
 
 
-def _srun_seed(fit_json, monkeypatch, procid, step):
-	cfg = json.loads(open(fit_json).read())
-	cfg['random_state'] = None
-	open(fit_json, 'w').write(json.dumps(cfg))
-
+def _srun_seed(monkeypatch, procid, step):
 	monkeypatch.delenv("LOCAL_RANK", raising=False)
 	monkeypatch.setenv("SLURM_NTASKS", "2")
 	monkeypatch.setenv("SLURM_JOB_ID", "4242")
 	monkeypatch.setenv("SLURM_STEP_ID", str(step))
 	monkeypatch.setenv("SLURM_PROCID", str(procid))
 
-	captured = _run_capturing_training_fit(fit_json)
+	captured = _run_capturing_training_fit(_fit_config(random_state=None))
 	return captured['peak_generator']['random_state']
 
 
-def test_fit_srun_ranks_derive_the_same_seed(fit_json, monkeypatch, capsys):
+def test_fit_srun_ranks_derive_the_same_seed(monkeypatch, capsys):
 	"""`srun` starts every rank at once, so no rank can inherit another's
 	draw. Each derives the seed from the job step, so they agree, and a new
 	`srun` gets a new seed."""
 
-	first = _srun_seed(fit_json, monkeypatch, procid=0, step=0)
+	first = _srun_seed(monkeypatch, procid=0, step=0)
 	assert "Derived random_state={}".format(first) in capsys.readouterr().out
 
-	assert _srun_seed(fit_json, monkeypatch, procid=1, step=0) == first
-	assert _srun_seed(fit_json, monkeypatch, procid=0, step=1) != first
+	assert _srun_seed(monkeypatch, procid=1, step=0) == first
+	assert _srun_seed(monkeypatch, procid=0, step=1) != first
 
 
-def test_default_fit_parameters_default_num_workers_is_one():
-	from cherimoya_cli.defaults import (
-		default_fit_parameters,
-		default_pipeline_parameters,
-	)
-	assert default_fit_parameters['num_workers'] == 1
-	assert default_pipeline_parameters['fit_parameters']['num_workers'] == 1
+def _fit_and_pipeline_defaults():
+	"""The composed `fit` config and the fit node of the `pipeline` config,
+	with every required key set."""
+
+	from cherimoya_cli.config import PipelineConfig
+
+	pipeline = OmegaConf.structured(PipelineConfig(name='demo',
+		sequences='fake.fa', loci='fake.bed', negatives='fake_negatives.bed',
+		signals=['fake.bw']))
+	return _fit_config(), pipeline.fit
 
 
-def test_default_fit_parameters_disable_early_stopping():
-	"""Early stopping is off by default in both the fit defaults and the
-	fit block of the pipeline defaults, matching `cherimoya.training.fit`'s
+def test_default_num_workers_is_one():
+	for cfg in _fit_and_pipeline_defaults():
+		assert cfg.num_workers == 1
+
+
+def test_default_disables_early_stopping():
+	"""Early stopping is off by default in both the fit config and the
+	fit node of the pipeline config, matching `cherimoya.training.fit`'s
 	``early_stopping=None``. A non-None default here would cut the cosine
 	learning rate schedule -- laid out over ``max_epochs`` -- short."""
 
-	from cherimoya_cli.defaults import (
-		default_fit_parameters,
-		default_pipeline_parameters,
-	)
-	assert default_fit_parameters['early_stopping'] is None
-	assert default_pipeline_parameters['fit_parameters']['early_stopping'] is None
+	for cfg in _fit_and_pipeline_defaults():
+		assert cfg.early_stopping is None
 
 
-def test_fit_json_without_early_stopping_merges_to_none(tmp_path):
-	"""A hand-written fit JSON that omits ``early_stopping`` must merge to
-	None rather than raising 'Must provide value', since merge_parameters
-	rejects a missing key whose default is None unless it is whitelisted."""
-
-	from cherimoya_cli.defaults import default_fit_parameters
-	from cherimoya_cli.utils import merge_parameters
-
-	cfg = dict(default_fit_parameters)
-	cfg['sequences'] = 'fake.fa'
-	cfg['loci'] = 'fake.bed'
-	cfg['negatives'] = 'fake_negatives.bed'
-	cfg['signals'] = ['fake.bw']
-	del cfg['early_stopping']
-
-	path = tmp_path / "fit.json"
-	path.write_text(json.dumps(cfg))
-
-	assert merge_parameters(str(path), default_fit_parameters)['early_stopping'] is None
+def test_default_progress_bar_is_none():
+	for cfg in _fit_and_pipeline_defaults():
+		assert cfg.progress_bar is None
 
 
-def test_fit_forwards_grouped_signals_to_peak_generator(tmp_path):
-	"""When the JSON gives a grouped signals spec, fit.run must
+def test_fit_forwards_grouped_signals_to_peak_generator():
+	"""When the config gives a grouped signals spec, fit.run must
 	forward the inferred signal_groups (and control_groups) to
 	PeakGenerator. Without this the structured form would be flattened
 	to "all unstranded" downstream."""
 
 	from cherimoya_cli.commands import fit as fit_cmd
-	from cherimoya_cli.defaults import default_fit_parameters
 
-	cfg = dict(default_fit_parameters)
-	cfg['sequences'] = 'fake.fa'
-	cfg['loci'] = 'fake.bed'
-	cfg['negatives'] = 'fake_negatives.bed'
 	# One unstranded ATAC group + one stranded TF group; per-group
 	# counts mean signal_groups=[1, 2].
-	cfg['signals'] = ['atac.bw', ['ctcf.+.bw', 'ctcf.-.bw']]
-	cfg['controls'] = [['ctl.+.bw', 'ctl.-.bw']]
-	cfg['name'] = 'fit_wiring_groups_test'
-	cfg['device'] = 'cpu'
-
-	path = tmp_path / "fit.json"
-	path.write_text(json.dumps(cfg))
+	cfg = _fit_config(signals=['atac.bw', ['ctcf.+.bw', 'ctcf.-.bw']],
+		controls=[['ctl.+.bw', 'ctl.-.bw']], name='fit_wiring_groups_test')
 
 	captured = {}
 
@@ -307,7 +248,7 @@ def test_fit_forwards_grouped_signals_to_peak_generator(tmp_path):
 	with mock.patch(
 			"cherimoya.io.PeakGenerator", side_effect=fake_peak_generator):
 		try:
-			fit_cmd.run(argparse.Namespace(parameters=str(path)))
+			fit_cmd.run(cfg)
 		except _StopFit:
 			pass
 		except Exception:
@@ -324,27 +265,18 @@ def test_fit_forwards_grouped_signals_to_peak_generator(tmp_path):
 
 def test_fit_does_not_flatten_signals_for_downstream_evaluate(tmp_path):
 	"""fit.run hands ``parameters['signals']`` to PeakGenerator and
-	(at the end of training) deepcopies the same dict into the
-	evaluate JSON. If fit silently re-writes ``signals`` to its flat
+	(at the end of training) copies the same value into the
+	evaluate configs. If fit silently re-writes ``signals`` to its flat
 	form, a stranded pair ``[[+, -]]`` becomes ``[+, -]`` in the
-	evaluate JSON, which then re-parses as two *unstranded* channels
+	evaluate configs, which then re-parse as two *unstranded* channels
 	— the same bug the grouping API was added to prevent. Pin the
 	contract by snapshotting what PeakGenerator actually receives."""
 
 	from cherimoya_cli.commands import fit as fit_cmd
-	from cherimoya_cli.defaults import default_fit_parameters
 
 	original_signals = [['ctcf.+.bw', 'ctcf.-.bw']]
-	cfg = dict(default_fit_parameters)
-	cfg['sequences'] = 'fake.fa'
-	cfg['loci'] = 'fake.bed'
-	cfg['negatives'] = 'fake_negatives.bed'
-	cfg['signals'] = original_signals
-	cfg['name'] = str(tmp_path / 'fit_eval_roundtrip')
-	cfg['device'] = 'cpu'
-
-	path = tmp_path / "fit.json"
-	path.write_text(json.dumps(cfg))
+	cfg = _fit_config(signals=original_signals,
+		name=str(tmp_path / 'fit_eval_roundtrip'))
 
 	captured = {}
 
@@ -358,7 +290,7 @@ def test_fit_does_not_flatten_signals_for_downstream_evaluate(tmp_path):
 	with mock.patch(
 			"cherimoya.io.PeakGenerator", side_effect=fake_peak_generator):
 		try:
-			fit_cmd.run(argparse.Namespace(parameters=str(path)))
+			fit_cmd.run(cfg)
 		except _StopFit:
 			pass
 		except Exception:
@@ -373,7 +305,7 @@ def test_fit_does_not_flatten_signals_for_downstream_evaluate(tmp_path):
 		"got {!r}".format(captured.get('signals')))
 
 
-def _run_capturing_peak_generator(path):
+def _run_capturing_peak_generator(cfg):
 	"""Run fit.run and return the kwargs PeakGenerator was called with.
 
 	Execution stops at that call, which is far enough to see every
@@ -394,7 +326,7 @@ def _run_capturing_peak_generator(path):
 	with mock.patch("cherimoya.io.PeakGenerator",
 			side_effect=fake_peak_generator):
 		try:
-			fit_cmd.run(argparse.Namespace(parameters=str(path)))
+			fit_cmd.run(cfg)
 		except _StopFit:
 			pass
 		except Exception:
@@ -405,100 +337,69 @@ def _run_capturing_peak_generator(path):
 	return captured
 
 
-def test_default_fit_parameters_random_state_is_zero():
-	"""Training is seeded by default. The nested pipeline copy stays
-	None so that `_extract_set` lets the top-level value through — a 0
-	there would shadow whatever the user set at the top level."""
+def test_default_random_state_is_zero():
+	"""Training is seeded by default. The pipeline's fit node
+	interpolates the top-level seed rather than holding its own, so a
+	value there cannot shadow whatever the user set at the top level."""
 
-	from cherimoya_cli.defaults import (
-		default_fit_parameters,
-		default_pipeline_parameters,
-	)
-	assert default_fit_parameters['random_state'] == 0
-	assert default_pipeline_parameters['random_state'] == 0
-	assert default_pipeline_parameters['fit_parameters']['random_state'] is None
+	fit, pipeline_fit = _fit_and_pipeline_defaults()
+	assert fit.random_state == 0
+	assert pipeline_fit.random_state == 0
+	assert OmegaConf.to_container(pipeline_fit)['random_state'] == (
+		'${random_state}')
 
 
-def test_pipeline_random_state_reaches_the_fit_json():
-	"""The top-level pipeline seed must survive `_extract_set` into the
-	fit JSON, since that is the dict the fit step actually reads."""
+def test_pipeline_random_state_reaches_the_fit_node():
+	"""The top-level pipeline seed must reach the fit node, since that is
+	the config the fit step actually reads."""
 
-	from cherimoya_cli.defaults import (
-		default_fit_parameters,
-		default_pipeline_parameters,
-	)
-	from cherimoya_cli.utils import _extract_set
+	from cherimoya_cli.config import PipelineConfig
 
-	parameters = dict(default_pipeline_parameters)
-	parameters['random_state'] = 7
-
-	extracted = _extract_set(parameters, default_fit_parameters,
-		'fit_parameters')
-	assert extracted['random_state'] == 7
+	cfg = OmegaConf.structured(PipelineConfig)
+	cfg.random_state = 7
+	assert cfg.fit.random_state == 7
 
 
-def test_fit_forwards_random_state_to_peak_generator(fit_json):
+def test_fit_forwards_random_state_to_peak_generator(fit_cfg):
 	"""The sampler's draw order is the half of reproducibility that was
 	already wired; confirm an explicit seed still reaches it."""
 
-	import json as _json
+	fit_cfg.random_state = 42
 
-	cfg = _json.loads(open(fit_json).read())
-	cfg['random_state'] = 42
-	open(fit_json, 'w').write(_json.dumps(cfg))
-
-	captured = _run_capturing_peak_generator(fit_json)
+	captured = _run_capturing_peak_generator(fit_cfg)
 	assert captured.get('random_state') == 42
 
 
-def test_fit_accepts_a_json_without_random_state(tmp_path):
-	"""merge_parameters rejects a missing key whose default is None, so
-	before the default became 0 a hand-written JSON that left the seed
-	out failed outright rather than falling back to it."""
+def test_fit_seeds_with_the_default_random_state(fit_cfg):
+	"""A config that leaves the seed out falls back to 0 rather than
+	running unseeded."""
 
-	from cherimoya_cli.defaults import default_fit_parameters
-
-	cfg = dict(default_fit_parameters)
-	del cfg['random_state']
-	cfg['sequences'] = 'fake.fa'
-	cfg['loci'] = 'fake.bed'
-	cfg['negatives'] = 'fake_negatives.bed'
-	cfg['signals'] = ['fake.bw']
-	cfg['name'] = 'fit_random_state_default_test'
-	cfg['device'] = 'cpu'
-
-	path = tmp_path / "fit.json"
-	path.write_text(json.dumps(cfg))
-
-	captured = _run_capturing_peak_generator(path)
+	captured = _run_capturing_peak_generator(fit_cfg)
 	assert captured.get('random_state') == 0
 
 
-def test_fit_draws_and_announces_a_null_random_state(fit_json, capsys):
+def test_fit_draws_and_announces_a_null_random_state(fit_cfg, capsys):
 	"""A null seed means "pick one and tell me", not "stay unseeded".
 	The drawn value has to be printed regardless of `verbose`, because
-	a run that dies before the evaluate JSON is written leaves no other
-	record of it."""
+	it is recorded nowhere else. It is also written back into the
+	config the caller passed."""
 
-	import json as _json
+	fit_cfg.random_state = None
+	fit_cfg.verbose = False
 
-	cfg = _json.loads(open(fit_json).read())
-	cfg['random_state'] = None
-	cfg['verbose'] = False
-	open(fit_json, 'w').write(_json.dumps(cfg))
-
-	captured = _run_capturing_peak_generator(fit_json)
+	captured = _run_capturing_peak_generator(fit_cfg)
 
 	drawn = captured.get('random_state')
 	assert isinstance(drawn, int), (
 		"a null random_state must be resolved to an integer before the "
 		"sampler is built; got {!r}".format(drawn))
+	assert fit_cfg.random_state == drawn
 
 	out = capsys.readouterr().out
 	assert "Drew random_state={}".format(drawn) in out
 
 
-def test_fit_seeds_the_model_initialization(fit_json):
+def test_fit_seeds_the_model_initialization(fit_cfg):
 	"""The seed has to reach the model as well as the sampler — the
 	initialization is the larger source of run-to-run variance, and it
 	was the half that nothing seeded before."""
@@ -513,7 +414,7 @@ def test_fit_seeds_the_model_initialization(fit_json):
 		pass
 
 	def fake_extract_loci(**kwargs):
-		# (sequences, signals); controls are absent in the fixture JSON.
+		# (sequences, signals); controls are absent in the fixture config.
 		return torch.zeros(1, 4, 16), torch.zeros(1, 1, 8)
 
 	def fake_model(**kwargs):
@@ -527,7 +428,7 @@ def test_fit_seeds_the_model_initialization(fit_json):
 				side_effect=fake_extract_loci), \
 			mock.patch("cherimoya.Cherimoya", side_effect=fake_model):
 		try:
-			fit_cmd.run(argparse.Namespace(parameters=fit_json))
+			fit_cmd.run(fit_cfg)
 		except _StopFit:
 			pass
 		except Exception:
@@ -547,15 +448,10 @@ def test_fit_seeds_the_model_initialization(fit_json):
 def test_default_min_total_steps_is_twenty_thousand():
 	"""An epoch is one pass over the peaks, so `max_epochs` alone buys a
 	step count proportional to peak count. The floor is on by default in
-	both the fit defaults and the fit block of the pipeline defaults."""
+	both the fit config and the fit node of the pipeline config."""
 
-	from cherimoya_cli.defaults import (
-		default_fit_parameters,
-		default_pipeline_parameters,
-	)
-	assert default_fit_parameters['min_total_steps'] == 20000
-	assert (default_pipeline_parameters['fit_parameters']['min_total_steps']
-		== 20000)
+	for cfg in _fit_and_pipeline_defaults():
+		assert cfg.min_total_steps == 20000
 
 
 def test_min_steps_extends_a_short_run():
@@ -608,68 +504,23 @@ def test_min_steps_tolerates_an_empty_training_set():
 	assert _max_epochs_for_min_steps(20, 0, 20000) == 20
 
 
-def test_fit_json_without_min_total_steps_merges_to_the_default(tmp_path):
-	"""A fit JSON written before this parameter existed still runs, and
-	picks up the floor rather than failing on the missing key."""
-
-	from cherimoya_cli.defaults import default_fit_parameters
-	from cherimoya_cli.utils import merge_parameters
-
-	cfg = dict(default_fit_parameters)
-	del cfg['min_total_steps']
-	path = tmp_path / "fit.json"
-	path.write_text(json.dumps(cfg))
-
-	assert merge_parameters(str(path), default_fit_parameters
-		)['min_total_steps'] == 20000
-
-
 # --------- fixed loss weights ---------------------------------------------
 
 def test_default_loss_weights_is_none():
 	"""The Kendall weights stay the default. Turning the fixed weights on
-	is opt-in, in both the fit defaults and the fit block of the pipeline
-	defaults."""
+	is opt-in, in both the fit config and the fit node of the pipeline
+	config."""
 
-	from cherimoya_cli.defaults import (
-		default_fit_parameters,
-		default_pipeline_parameters,
-	)
-	assert default_fit_parameters['loss_weights'] is None
-	assert default_pipeline_parameters['fit_parameters']['loss_weights'] is None
+	for cfg in _fit_and_pipeline_defaults():
+		assert cfg.loss_weights is None
 
 
-def test_fit_json_without_loss_weights_merges_to_none(tmp_path):
-	"""``loss_weights`` defaults to None, and ``merge_parameters`` rejects a
-	missing key whose default is None unless it is whitelisted. A fit JSON
-	written before this parameter existed must still run."""
+def test_loss_weights_override_survives_as_a_pair(make_config):
+	"""An override gives the pair as a list; ``fit`` unpacks it either way
+	and the values must not be coerced or reordered."""
 
-	from cherimoya_cli.defaults import default_fit_parameters
-	from cherimoya_cli.utils import merge_parameters
-
-	cfg = dict(default_fit_parameters)
-	del cfg['loss_weights']
-	path = tmp_path / "fit.json"
-	path.write_text(json.dumps(cfg))
-
-	assert merge_parameters(str(path), default_fit_parameters
-		)['loss_weights'] is None
-
-
-def test_fit_json_loss_weights_survives_as_a_pair(tmp_path):
-	"""JSON has no tuple, so the pair arrives as a list; ``fit`` unpacks it
-	either way and the values must not be coerced or reordered."""
-
-	from cherimoya_cli.defaults import default_fit_parameters
-	from cherimoya_cli.utils import merge_parameters
-
-	cfg = dict(default_fit_parameters)
-	cfg['loss_weights'] = [1.333, 0.274]
-	path = tmp_path / "fit.json"
-	path.write_text(json.dumps(cfg))
-
-	merged = merge_parameters(str(path), default_fit_parameters)
-	w0, w1 = merged['loss_weights']
+	cfg = make_config("fit", "loss_weights=[1.333,0.274]")
+	w0, w1 = cfg.loss_weights
 	assert (w0, w1) == (1.333, 0.274)
 
 
@@ -704,12 +555,13 @@ def test_loss_balance_summary_reports_the_fixed_weights():
 
 
 def test_loss_balance_summary_accepts_the_pair_as_a_list():
-	"""JSON has no tuple, so `parameters['loss_weights']` arrives as a
-	list and must be reported the same way a tuple is."""
+	"""A config has no tuple, so `loss_weights` arrives as a list and must
+	be reported the same way a tuple is."""
 
 	from cherimoya_cli.commands.fit import _loss_balance_summary
 
-	assert (_loss_balance_summary([1.333, 0.274], 0.01, 0.0, 0.9)
+	pair = OmegaConf.create([1.333, 0.274])
+	assert (_loss_balance_summary(pair, 0.01, 0.0, 0.9)
 		== _loss_balance_summary((1.333, 0.274), 0.01, 0.0, 0.9))
 
 
@@ -718,7 +570,7 @@ def test_loss_balance_summary_accepts_the_pair_as_a_list():
 	([1.333, 0.274], "Fixed Loss Weights: profile=1.333, count=0.274",
 		"SGD Optimizer (lw)"),
 ])
-def test_fit_banner_names_the_loss_balancing_in_force(fit_json, capsys,
+def test_fit_banner_names_the_loss_balancing_in_force(fit_cfg, capsys,
 	loss_weights, expected, forbidden):
 	"""End to end through `fit.run`: with `verbose` on, the banner must
 	name whichever scheme the run uses -- the `lw_*` optimizer when the
@@ -726,18 +578,14 @@ def test_fit_banner_names_the_loss_balancing_in_force(fit_json, capsys,
 	optimizer is inert. Training is cut off at `cherimoya.training.fit`,
 	which is the call the banner immediately precedes."""
 
-	import json as _json
-
 	import torch
 
 	from cherimoya_cli.commands import fit as fit_cmd
 
-	cfg = _json.loads(open(fit_json).read())
-	cfg['loss_weights'] = loss_weights
-	cfg['verbose'] = True
-	cfg['n_layers'] = 2
-	cfg['n_filters'] = 8
-	open(fit_json, 'w').write(_json.dumps(cfg))
+	fit_cfg.loss_weights = loss_weights
+	fit_cfg.verbose = True
+	fit_cfg.n_layers = 2
+	fit_cfg.n_filters = 8
 
 	class _StopFit(Exception):
 		pass
@@ -752,32 +600,29 @@ def test_fit_banner_names_the_loss_balancing_in_force(fit_json, capsys,
 				side_effect=fake_extract_loci), \
 			mock.patch("cherimoya.training.fit", side_effect=_StopFit()):
 		with pytest.raises(_StopFit):
-			fit_cmd.run(argparse.Namespace(parameters=fit_json))
+			fit_cmd.run(fit_cfg)
 
 	out = capsys.readouterr().out
 	assert expected in out
 	assert forbidden not in out
 
 
-def _run_fit_evaluations(fit_json, tmp_path, monkeypatch):
+# --------- the evaluate step ----------------------------------------------
+
+def _run_fit_evaluations(cfg, tmp_path, monkeypatch):
 	"""Run `fit.run` through its evaluate step with training and data
 	loading faked, and return the evaluate configs it passed on, in order."""
 
 	import types
 
 	import torch
-	from omegaconf import OmegaConf
 
 	from cherimoya_cli.commands import fit as fit_cmd
 
 	monkeypatch.chdir(tmp_path)
-	evaluated = []
 
 	def fake_extract_loci(**kwargs):
 		return torch.zeros(1, 4, 16), torch.zeros(1, 1, 8)
-
-	def fake_evaluate(cfg):
-		evaluated.append(OmegaConf.to_container(cfg))
 
 	with mock.patch("cherimoya.io.PeakGenerator",
 				return_value=_FakeLoader([None] * 4)), \
@@ -786,85 +631,103 @@ def _run_fit_evaluations(fit_json, tmp_path, monkeypatch):
 				side_effect=fake_extract_loci), \
 			mock.patch("cherimoya.training.fit",
 				return_value=types.SimpleNamespace(is_global_zero=True)), \
-			mock.patch("cherimoya_cli.commands.evaluate.run",
-				side_effect=fake_evaluate):
-		fit_cmd.run(argparse.Namespace(parameters=fit_json))
+			mock.patch("cherimoya_cli.commands.evaluate.run") as evaluate:
+		fit_cmd.run(cfg)
 
-	return evaluated
+	return [call.args[0] for call in evaluate.call_args_list]
 
 
-def test_fit_evaluates_the_validation_and_test_chromosomes(fit_json, tmp_path,
+def test_fit_evaluates_the_validation_and_test_chromosomes(fit_cfg, tmp_path,
 	monkeypatch):
-	from cherimoya_cli.defaults import test_chroms, validation_chroms
+	"""Each evaluate config is saved next to the model, so either
+	evaluation can be rerun with `-p`."""
 
-	evaluated = _run_fit_evaluations(fit_json, tmp_path, monkeypatch)
+	from cherimoya_cli.config import test_chroms, validation_chroms
 
-	assert [(cfg['chroms'], cfg['performance_filename'], cfg['model'])
+	evaluated = _run_fit_evaluations(fit_cfg, tmp_path, monkeypatch)
+
+	assert [(list(cfg.chroms), cfg.performance_filename, cfg.model)
 		for cfg in evaluated] == [
 		(validation_chroms, "fit_wiring_test.validation.performance.tsv",
 			"fit_wiring_test.torch"),
 		(test_chroms, "fit_wiring_test.test.performance.tsv",
 			"fit_wiring_test.torch"),
 	]
-	for split in ("validation", "test"):
-		assert (tmp_path / "fit_wiring_test.{}.evaluate.json".format(
-			split)).exists()
+	for split, cfg in zip(("validation", "test"), evaluated):
+		saved = OmegaConf.load(tmp_path / "fit_wiring_test.{}.evaluate.yaml"
+			.format(split))
+		assert saved == cfg
 
 
-def test_fit_skips_the_test_evaluation_without_test_chromosomes(fit_json,
+def test_fit_skips_the_test_evaluation_without_test_chromosomes(fit_cfg,
 	tmp_path, monkeypatch):
-	cfg = json.loads(open(fit_json).read())
-	cfg['test_chroms'] = None
-	open(fit_json, 'w').write(json.dumps(cfg))
+	fit_cfg.test_chroms = None
 
-	evaluated = _run_fit_evaluations(fit_json, tmp_path, monkeypatch)
-	assert [cfg['performance_filename'] for cfg in evaluated] == [
+	evaluated = _run_fit_evaluations(fit_cfg, tmp_path, monkeypatch)
+	assert [cfg.performance_filename for cfg in evaluated] == [
 		"fit_wiring_test.validation.performance.tsv"]
+	assert not (tmp_path / "fit_wiring_test.test.evaluate.yaml").exists()
+
+
+def test_fit_hands_evaluate_only_the_keys_evaluate_declares(fit_cfg,
+		tmp_path, monkeypatch):
+	"""Evaluate's schema rejects unknown keys, so fit copies only the
+	shared ones, the negatives and summits among them, and points the rest
+	at the trained model."""
+
+	import dataclasses
+
+	from cherimoya_cli.config import EvaluateConfig
+
+	fit_cfg.signals = [['ctcf.+.bw', 'ctcf.-.bw']]
+	fit_cfg.summits = True
+	cfg, _ = _run_fit_evaluations(fit_cfg, tmp_path, monkeypatch)
+
+	assert OmegaConf.get_type(cfg) is EvaluateConfig
+	assert set(cfg) == {f.name for f in dataclasses.fields(EvaluateConfig)}
+	assert cfg.batch_size == 16
+	assert cfg.negatives == "fake_negatives.bed"
+	assert cfg.summits is True
+	assert OmegaConf.to_container(cfg.signals) == [['ctcf.+.bw', 'ctcf.-.bw']]
 
 
 @pytest.mark.parametrize("key", ["validation_chroms", "test_chroms"])
-def test_fit_refuses_chromosomes_shared_between_splits(fit_json, key):
+def test_fit_refuses_chromosomes_shared_between_splits(fit_cfg, key):
 	from cherimoya_cli.commands import fit as fit_cmd
 
-	cfg = json.loads(open(fit_json).read())
-	cfg[key] = cfg[key] + ["chr2"]
-	open(fit_json, 'w').write(json.dumps(cfg))
+	fit_cfg[key] = list(fit_cfg[key]) + ["chr2"]
 
 	with pytest.raises(ValueError, match="training_chroms and {} share "
 		r"\['chr2'\]".format(key)):
-		fit_cmd.run(argparse.Namespace(parameters=fit_json))
+		fit_cmd.run(fit_cfg)
 
 
-def test_fit_builds_the_model_with_the_compile_setting(fit_json):
-	cfg = json.loads(open(fit_json).read())
-	cfg['compile'] = False
-	cfg['n_filters'], cfg['n_layers'] = 8, 2
-	open(fit_json, 'w').write(json.dumps(cfg))
+def test_fit_builds_the_model_with_the_compile_setting(fit_cfg):
+	fit_cfg.compile = False
+	fit_cfg.n_filters, fit_cfg.n_layers = 8, 2
 
-	model = _run_capturing_training_fit(fit_json)['model']
+	model = _run_capturing_training_fit(fit_cfg)['model']
 	assert model._compile is False
 
 
-def test_fit_centers_validation_peaks_as_training_does(fit_json):
+def test_fit_centers_validation_peaks_as_training_does(fit_cfg):
 	"""With `summits`, the validation peaks are centered on the summit like
 	the training peaks; the negatives, which have no summit, are not."""
 
-	cfg = json.loads(open(fit_json).read())
-	cfg['summits'] = True
-	open(fit_json, 'w').write(json.dumps(cfg))
+	fit_cfg.summits = True
 
-	captured = _run_capturing_training_fit(fit_json)
+	captured = _run_capturing_training_fit(fit_cfg)
 	assert captured['peak_generator']['summits'] is True
 	assert captured['extract']['fake.bed']['summits'] is True
 	assert captured['extract']['fake_negatives.bed'].get('summits', False) is False
 
 
 def test_fit_validates_without_negatives_on_the_validation_chromosomes(
-	fit_json):
+	fit_cfg):
 	"""A negatives file with nothing on the validation chromosomes leaves
 	the validation set to the peaks rather than failing in extract_loci."""
 
-	captured = _run_capturing_training_fit(fit_json, n_on_chroms=0)
+	captured = _run_capturing_training_fit(fit_cfg, n_on_chroms=0)
 	X_valid, _ = captured['valid']
 	assert len(X_valid) == 1
 	assert captured['labels_valid'] is None

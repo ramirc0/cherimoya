@@ -48,7 +48,6 @@ def _validate_inputs(parameters):
 
 
 def run(args):
-	import argparse
 	import json
 	import subprocess
 	import sys
@@ -292,7 +291,7 @@ def run(args):
 				subprocess.run([sys.executable, "-m", "cherimoya_cli", "fit",
 					"-p", name], check=True)
 		elif not parameters["dry_run"]:
-			fit_cmd.run(argparse.Namespace(parameters=name))
+			fit_cmd.run(_json_config("fit", fit_parameters))
 
 	###
 	# Step 2: Calculate attributions
