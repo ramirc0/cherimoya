@@ -16,8 +16,8 @@ Inputs
 ------
 
 * Reference genome FASTA.
-* Per-condition signal BAMs (with replicates pooled or treated as
-  separate ``-i`` files).
+* Per-condition signal BAMs (with replicates pooled or listed as
+  separate ``signals`` files).
 * Per-condition control BAMs (for ChIP-seq) or none (for ATAC/DNase).
 * A motif database in MEME format.
 
@@ -25,32 +25,32 @@ Inputs
 Step 1: train one model per condition
 --------------------------------------
 
-Generate one pipeline JSON per condition and run them (see
-:doc:`../cli`):
+Name the files after each condition and run one sweep over the
+condition names. ``${name}`` in a value is replaced by each job's
+``name``, so every job reads its own BAMs:
 
 .. code-block:: bash
 
-   cherimoya pipeline-json \
-       -s hg38.fa \
-       -i condA_rep1.bam -i condA_rep2.bam \
-       -c condA_input.bam \
-       -m JASPAR_2024.meme -n condA -o condA.pipeline.json
+   cherimoya pipeline -m name=condA,condB sequences=hg38.fa \
+       loci=null negatives=null \
+       'signals=[${name}_rep1.bam,${name}_rep2.bam]' \
+       'controls=[${name}_input.bam]' \
+       motifs=JASPAR_2024.meme \
+       hydra.sweep.dir=differential 'hydra.sweep.subdir=${name}'
 
-   cherimoya pipeline-json \
-       -s hg38.fa \
-       -i condB_rep1.bam -i condB_rep2.bam \
-       -c condB_input.bam \
-       -m JASPAR_2024.meme -n condB -o condB.pipeline.json
+``-m`` must come before or after the ``key=value`` overrides, not
+between them. The two ``hydra.sweep`` keys put each job in
+``differential/<name>/`` instead of the default
+``multirun/<date>/<time>/<n>/``. The jobs run one after another; to
+run them in parallel on a SLURM cluster, see :doc:`../cli`.
 
-   cherimoya pipeline -p condA.pipeline.json
-   cherimoya pipeline -p condB.pipeline.json
+Each job produces a model checkpoint (``differential/condA/condA.torch``,
+``differential/condB/condB.torch``), per-track bigWigs, attributions,
+seqlets, and a TF-MoDISco report scoped to that condition's peaks.
 
-Each run produces a model checkpoint (``condA.torch`` /
-``condB.torch``), per-track bigWigs, attributions, seqlets, and a
-TF-MoDISco report scoped to that condition's peaks.
-
-Use the same ``training_chroms`` / ``validation_chroms`` in both
-JSONs so the held-out evaluation is comparable.
+Both jobs share one config apart from ``name``, so they use the same
+``fit.training_chroms`` / ``fit.validation_chroms`` and the held-out
+evaluation is comparable.
 
 
 Step 2: build a shared locus set
@@ -71,7 +71,8 @@ A typical union with ``bedtools``:
 
 .. code-block:: bash
 
-   cat condA_peaks.narrowPeak condB_peaks.narrowPeak | \
+   cat differential/condA/condA_peaks.narrowPeak \
+       differential/condB/condB_peaks.narrowPeak | \
        sort -k1,1 -k2,2n | \
        bedtools merge -i - > shared_loci.bed
 
@@ -85,8 +86,8 @@ Step 3: predict from both models on the shared set
    from tangermeme.io import extract_loci
    from tangermeme.predict import predict
 
-   model_A = Cherimoya.load("condA.torch", device="cuda")
-   model_B = Cherimoya.load("condB.torch", device="cuda")
+   model_A = Cherimoya.load("differential/condA/condA.torch", device="cuda")
+   model_B = Cherimoya.load("differential/condB/condB.torch", device="cuda")
    model_A.eval(); model_B.eval()
 
    X, _ = extract_loci(
@@ -113,16 +114,20 @@ Step 4: identify differential motifs
 
 For motif-level differences, run marginalization on both models and
 compare. Each model's pipeline already runs marginalization on its
-own negative loci; to compare directly, run marginalization on a
+own peaks; to compare directly, run marginalization on a
 **shared** background:
 
 .. code-block:: bash
 
-   cherimoya marginalize -p marginalize_A.json
-   cherimoya marginalize -p marginalize_B.json
+   cherimoya marginalize model=differential/condA/condA.torch \
+       sequences=hg38.fa motifs=JASPAR_2024.meme \
+       'loci=[shared_loci.bed]' output_filename=condA_shared_marginalize/
+   cherimoya marginalize model=differential/condB/condB.torch \
+       sequences=hg38.fa motifs=JASPAR_2024.meme \
+       'loci=[shared_loci.bed]' output_filename=condB_shared_marginalize/
 
-with the two JSONs differing only in ``model`` and ``output_filename``,
-but identical in ``loci`` (the shared background) and ``motifs``. The
+The two commands differ only in ``model`` and ``output_filename``,
+and share ``loci`` (the shared background) and ``motifs``. The
 delta in per-motif marginalization scores between A and B is a
 direct estimate of which motifs cause the condition-specific signal.
 
@@ -134,7 +139,7 @@ Caveats
   ``chr8``/``chr20`` as validation cannot be compared with one
   trained with ``chr1``/``chr12`` as validation on common loci —
   some of those loci were in the second model's training set. Use
-  the same split in both JSONs.
+  the same split for both models.
 * **Replicate-to-replicate noise is the floor.** Before treating
   ``delta_log_counts`` as biological signal, compare to the
   technical-replicate baseline by training two models on independent
@@ -143,6 +148,6 @@ Caveats
 * **The two models share no parameters.** Each model is fit
   independently and the comparison happens only at prediction time.
   Multi-output single-model training is possible by passing
-  ``-i condA.bw -i condB.bw`` to one pipeline (Cherimoya treats each
+  ``'signals=[condA.bw,condB.bw]'`` to one pipeline (Cherimoya treats each
   signal as a separate output track), but in practice per-condition
   models give cleaner attribution and motif results.

@@ -127,7 +127,7 @@ history.
 
 The sampler is only half of a reproducible run. Pass ``random_state``
 to ``Cherimoya`` as well to fix the weight initialization, which is
-what ``cherimoya fit`` does with the single seed in its JSON.
+what ``cherimoya fit`` does with the single seed in its config.
 
 
 Preparing validation data

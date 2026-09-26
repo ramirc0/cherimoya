@@ -13,12 +13,10 @@ For stranded ChIP-seq with input controls:
 
 .. code-block:: bash
 
-   cherimoya pipeline-json \
-       -s hg38.fa -p peaks.narrowPeak \
-       -i input.bam -c control.bam \
-       -m JASPAR_2024.meme -n my_experiment -o pipeline.json
-
-   cherimoya pipeline -p pipeline.json
+   cherimoya pipeline name=my_experiment sequences=hg38.fa \
+       'loci=[peaks.narrowPeak]' negatives=null \
+       'signals=[input.bam]' 'controls=[control.bam]' \
+       motifs=JASPAR_2024.meme
 
 This calls peaks with MACS3 (unless ``-p`` gave peaks, as here), converts BAMs to bigWigs, samples
 GC-matched negatives, trains a Cherimoya model, computes attributions
@@ -65,7 +63,7 @@ To co-train an unstranded ATAC head alongside a stranded TF head, pass
 predictions (one for ATAC, one shared across the TF strands). See
 :doc:`multi_task` for an in-depth treatment of single-task,
 single-experiment-stranded, and variably-multitask models — including
-the JSON shapes the CLI expects and how Cherimoya balances losses
+the ``signals`` shapes the CLI expects and how Cherimoya balances losses
 across modalities.
 
 To one-hot encode real DNA, use ``tangermeme.utils.one_hot_encode``

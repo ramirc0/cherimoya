@@ -18,22 +18,21 @@ Inputs
   call peaks.
 
 
-Generate the pipeline JSON
---------------------------
+Run the pipeline
+----------------
 
 .. code-block:: bash
 
-   cherimoya pipeline-json \
-       -s hg38.fa \
-       -i ctcf_rep1.bam -i ctcf_rep2.bam \
-       -c input_rep1.bam -c input_rep2.bam \
-       -m JASPAR_2024.meme \
-       -n ctcf \
-       -o ctcf.pipeline.json
+   cherimoya pipeline name=ctcf sequences=hg38.fa \
+       loci=null negatives=null \
+       'signals=[ctcf_rep1.bam,ctcf_rep2.bam]' \
+       'controls=[input_rep1.bam,input_rep2.bam]' \
+       motifs=JASPAR_2024.meme
 
-If you already have peak coordinates, add ``-p ctcf_peaks.narrowPeak``.
+If you already have peak coordinates, pass
+``'loci=[ctcf_peaks.narrowPeak]'`` instead of ``loci=null``.
 
-The defaults populated into the JSON are:
+The ``preprocessing`` defaults are:
 
 * Stranded output (``unstranded: false``).
 * No read shift (``pos_shift: 0``, ``neg_shift: 0``).
@@ -42,16 +41,7 @@ The defaults populated into the JSON are:
   inputs, ``BAMPE`` when ``paired_end: true``).
 
 These are appropriate for typical TF ChIP-seq. If your ChIP-seq is
-paired-end, override with ``-pe`` at this step or set
-``"paired_end": true`` in the JSON.
-
-
-Run the pipeline
-----------------
-
-.. code-block:: bash
-
-   cherimoya pipeline -p ctcf.pipeline.json
+paired-end, add ``preprocessing.paired_end=true``.
 
 Steps invoked, in order:
 
@@ -69,15 +59,16 @@ Steps invoked, in order:
 6. Call seqlets, annotate with tomtom-lite against
    ``JASPAR_2024.meme``.
 7. Run TF-MoDISco motif discovery and generate the HTML report.
-8. Marginalize each motif at the center of negative loci and
+8. Marginalize each motif at the center of peak loci and
    generate the marginalization report.
 
 
 Common overrides
 ----------------
 
-If you want to deviate from defaults, edit the JSON before running
-``cherimoya pipeline``. The most commonly overridden keys:
+To deviate from the defaults, add overrides to the command, such as
+``fit.n_filters=64``, or keep the config in a file (``--cfg job``, see
+:doc:`../tutorials/cli_pipeline`). The most commonly overridden keys:
 
 .. list-table::
    :header-rows: 1
@@ -86,28 +77,28 @@ If you want to deviate from defaults, edit the JSON before running
    * - Key path
      - Default
      - When to change
-   * - ``fit_parameters.n_filters``
+   * - ``fit.n_filters``
      - 128
      - Smaller (64) for faster experiments; larger (192) for very
        complex assays.
-   * - ``fit_parameters.n_layers``
+   * - ``fit.n_layers``
      - 9
      - Reduce to shrink the receptive field, which is 1117 bp at 9
        layers (see :doc:`../architecture`).
-   * - ``fit_parameters.max_epochs``
+   * - ``fit.max_epochs``
      - 20
      - Reduce for quick smoke tests; increase only if the validation
        count Pearson is still climbing at the last epoch. The run is
        also extended to at least ``min_total_steps`` (20000) steps.
-   * - ``fit_parameters.training_chroms`` / ``validation_chroms``
+   * - ``fit.training_chroms`` / ``fit.validation_chroms``
      - hg38 default split (chr8/chr20 validation)
      - For non-hg38 references, replace with the appropriate
        chromosome list.
-   * - ``preprocessing_parameters.callpeaks_gsize``
+   * - ``preprocessing.callpeaks_gsize``
      - ``"hs"``
      - Set to ``"mm"`` for mouse, or a numeric effective genome size
        for other organisms.
-   * - ``preprocessing_parameters.callpeaks_q``
+   * - ``preprocessing.callpeaks_q``
      - 0.05
      - Loosen (0.1) for low-yield experiments, tighten (0.01) for
        very confident calls.

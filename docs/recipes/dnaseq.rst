@@ -19,41 +19,29 @@ Inputs
   call peaks.
 
 
-Generate the pipeline JSON
---------------------------
-
-.. code-block:: bash
-
-   cherimoya pipeline-json \
-       -s hg38.fa \
-       -i dnase.bam \
-       -m JASPAR_2024.meme \
-       -n dnase_experiment \
-       -o dnase.pipeline.json \
-       -u
-
-Flag-by-flag:
-
-* ``-u`` — unstranded output (single signal track). The most common
-  setup for DNase-seq.
-* No ``-pe`` (single-end reads).
-* No ``-f`` (the input is a BAM of aligned reads, not a fragment
-  file).
-* No shift by default. If your protocol calls for a DNase I-specific
-  shift (some pipelines apply +1 / 0 to mark cut sites), set
-  ``-ps`` / ``-ns`` here.
-
-For a stranded variant, omit ``-u``. Cherimoya will then produce two
-output tracks (+ and - strand) and the trained model will have
-``signal_groups=[2]`` (one stranded group).
-
-
 Run the pipeline
 ----------------
 
 .. code-block:: bash
 
-   cherimoya pipeline -p dnase.pipeline.json
+   cherimoya pipeline name=dnase_experiment sequences=hg38.fa \
+       loci=null negatives=null 'signals=[dnase.bam]' \
+       motifs=JASPAR_2024.meme preprocessing.unstranded=true
+
+Key by key:
+
+* ``preprocessing.unstranded=true``: unstranded output (single signal
+  track). The most common setup for DNase-seq.
+* ``paired_end`` stays ``false`` (single-end reads).
+* ``fragments`` stays ``false`` (the input is a BAM of aligned reads,
+  not a fragment file).
+* No shift by default. If your protocol calls for a DNase I-specific
+  shift (some pipelines apply +1 / 0 to mark cut sites), set
+  ``preprocessing.pos_shift`` / ``preprocessing.neg_shift``.
+
+For a stranded variant, drop ``preprocessing.unstranded=true``.
+Cherimoya will then produce two output tracks (+ and - strand) and the
+trained model will have ``signal_groups=[2]`` (one stranded group).
 
 Steps invoked, in order:
 
@@ -68,7 +56,7 @@ Steps invoked, in order:
    validation chromosomes.
 6. Call seqlets, annotate with tomtom-lite.
 7. Run TF-MoDISco motif discovery.
-8. Marginalize each motif at the center of negative loci.
+8. Marginalize each motif at the center of peak loci.
 
 
 Notes
