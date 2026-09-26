@@ -1,54 +1,90 @@
-"""Tests that every key the pipeline declares for a step is one the step's
-subcommand declares too.
+"""Tests that every declared config key is one something reads.
 
-A declared key that the subcommand does not know is worse than none: it
-appears in the generated JSON and in the CLI reference, so setting it looks
-like it should do something. Two have already shipped that way --
-`marginalize_parameters.output_folder`, which the command spells
-`output_filename`, and `fit_parameters.count_loss_weight`, which nothing
-has ever read. This does not check that a subcommand reads each of its own
-defaults.
+A key that nothing reads is worse than no key: it appears in the saved
+config and in the CLI reference, so setting it looks like it should do
+something. Two have already shipped that way -- marginalize's
+`output_folder`, which the command spells `output_filename`, and fit's
+`count_loss_weight`, which nothing has ever read -- so the invariant is
+pinned for every step rather than for the two that happened to be found.
 """
+
+import dataclasses
+import pathlib
+import re
+import typing
 
 import pytest
 
-from cherimoya_cli import defaults as D
+from cherimoya_cli import config as C
 
 
-# `_extract_set` carries a declared key into the step JSON whether or
-# not the command reads it, which is what lets the two drift apart.
-# These are exactly the five `_extract_set` calls in `pipeline.run`,
-# each paired with the defaults dict that call passes.
-FORWARDED_STEPS = {
-	"fit_parameters": D.default_fit_parameters,
-	"attribute_parameters": D.default_attribute_parameters,
-	"seqlet_parameters": D.default_seqlet_parameters,
-	"annotation_parameters": D.default_annotation_parameters,
-	"marginalize_parameters": D.default_marginalize_parameters,
+# The pipeline's step nodes and the schema that types each one. A key
+# the schema lacks is rejected when the config is composed.
+STEP_SCHEMAS = {
+	"preprocessing": C.PreprocessConfig,
+	"negative_sampling": C.NegativesConfig,
+	"fit": C.FitConfig,
+	"attribute": C.AttributeConfig,
+	"seqlets": C.SeqletsConfig,
+	"annotation": C.AnnotationConfig,
+	"modisco_motifs": C.ModiscoMotifsConfig,
+	"modisco_report": C.ModiscoReportConfig,
+	"marginalize": C.MarginalizeConfig,
+}
+
+# The module that reads each schema. The pipeline-only steps are read by
+# the pipeline itself.
+READERS = {
+	C.NegativesConfig: "negatives",
+	C.FitConfig: "fit",
+	C.EvaluateConfig: "evaluate",
+	C.AttributeConfig: "attribute",
+	C.SeqletsConfig: "seqlets",
+	C.MarginalizeConfig: "marginalize",
+	C.PreprocessConfig: "pipeline",
+	C.AnnotationConfig: "pipeline",
+	C.ModiscoMotifsConfig: "pipeline",
+	C.ModiscoReportConfig: "pipeline",
+}
+
+# Declared keys no module reads today. Pinned so a new one fails the test.
+KNOWN_UNREAD = {
+	(C.SeqletsConfig, "verbose"),
+	(C.MarginalizeConfig, "out_window"),
 }
 
 
 ##
 
 
-@pytest.mark.parametrize("step", sorted(FORWARDED_STEPS))
-def test_every_declared_step_key_is_read_by_its_command(step):
-	"""Every key the pipeline declares for a step must be one the
-	subcommand has a default for, or it lands in the step JSON where
-	nothing reads it."""
+def test_every_pipeline_step_is_typed_by_its_schema():
+	hints = typing.get_type_hints(C.PipelineConfig)
+	assert {step: hints[step] for step in STEP_SCHEMAS} == STEP_SCHEMAS
 
-	declared = set(D.default_pipeline_parameters[step])
-	unknown = declared - set(FORWARDED_STEPS[step])
 
-	assert unknown == set(), (
-		"pipeline declares {} keys nothing reads: {}"
-		.format(step, sorted(unknown)))
+@pytest.mark.parametrize("schema", list(READERS), ids=lambda s: s.__name__)
+def test_every_declared_key_is_read(schema):
+	"""A text check: each key must appear as `"key"` or `.key` in the
+	module that reads the schema."""
+
+	path = pathlib.Path(C.__file__).parent / "commands" / (READERS[schema]
+		+ ".py")
+	source = path.read_text()
+
+	unread = {field.name for field in dataclasses.fields(schema)
+		if not re.search(r"""["']{0}["']|\.{0}\b""".format(field.name), source)}
+	if schema is C.FitConfig:
+		# fit hands the evaluation after training every key the two share.
+		unread -= {field.name for field in dataclasses.fields(C.EvaluateConfig)}
+
+	assert unread == {key for s, key in KNOWN_UNREAD if s is schema}
 
 
 def test_marginalize_output_key_is_declared():
 	"""The other half of the rename: dropping the key entirely would
-	leave the subset check above passing while the output path became
-	unsettable from a pipeline JSON."""
+	leave the checks above passing while the output path became
+	unsettable."""
 
-	assert "output_filename" in D.default_pipeline_parameters[
-		"marginalize_parameters"]
+	keys = {field.name for field in dataclasses.fields(C.MarginalizeConfig)}
+	assert "output_filename" in keys
+	assert "output_folder" not in keys

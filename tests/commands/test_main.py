@@ -143,6 +143,26 @@ def test_fit_is_dispatched_to_hydra(tmp_path, monkeypatch):
 		str(tmp_path / "c.-.bw")]
 
 
+def test_pipeline_is_dispatched_to_hydra(tmp_path, monkeypatch):
+	"""A step override reaches its node, and the shared inputs the steps
+	interpolate are made absolute."""
+
+	for name in ("g.fa", "p.bed", "s.bw"):
+		(tmp_path / name).write_text("")
+	monkeypatch.chdir(tmp_path)
+
+	with mock.patch("cherimoya_cli.commands.pipeline.run") as run:
+		_main(monkeypatch, "pipeline", "name=demo", "sequences=g.fa",
+			"loci=[p.bed]", "negatives=null", "signals=[s.bw]",
+			"fit.n_filters=64")
+
+	cfg = run.call_args.args[0]
+	assert cfg.fit.n_filters == 64
+	assert cfg.negatives is None
+	assert list(cfg.fit.loci) == [str(tmp_path / "p.bed")]
+	assert cfg.attribute.sequences == str(tmp_path / "g.fa")
+
+
 def test_version(monkeypatch, capsys):
 	from cherimoya_cli.__main__ import __version__
 

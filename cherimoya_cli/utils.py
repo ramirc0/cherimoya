@@ -4,7 +4,6 @@
 import copy
 import os
 import json
-import dataclasses
 
 
 # Config keys that name input files, across every command's schema.
@@ -71,21 +70,6 @@ def merge_parameters(parameters, default_parameters):
 			parameters[parameter] = copy.deepcopy(value)
 
 	return parameters
-
-
-def _json_config(command, parameters):
-	"""Build a Hydra command's config from a JSON-style parameter dict, for
-	the JSON-driven `fit` and `pipeline`. Keys the schema lacks are
-	dropped."""
-
-	from omegaconf import OmegaConf
-
-	from .config import SCHEMAS
-
-	schema = SCHEMAS[command]
-	keys = {f.name for f in dataclasses.fields(schema)}
-	return OmegaConf.merge(OmegaConf.structured(schema),
-		{key: value for key, value in parameters.items() if key in keys})
 
 
 def resolve_inputs(cfg):

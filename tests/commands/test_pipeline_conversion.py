@@ -2,19 +2,19 @@
 
 Signals and controls given as SAM/BAM or BED/tsv files are converted by
 `figwig bam2bw`, and `signals`/`controls` are rewritten to the bigWigs it
-writes before the fit JSON is made. The first tests check the command line
+writes before the fit config is made. The first tests check the command line
 the pipeline builds; the last runs the real command on a three-read BAM.
 """
 
 import contextlib
-import json
 import subprocess
 from unittest import mock
 
 import numpy
 import pytest
+from omegaconf import OmegaConf
 
-from cherimoya_cli.defaults import default_pipeline_parameters
+from cherimoya_cli.config import PreprocessConfig
 
 
 STEPS = ("fit", "attribute", "seqlets", "marginalize")
@@ -48,11 +48,9 @@ def _conversions(commands):
 
 
 def _preprocessing(**kwargs):
-	"""Every preprocessing key, since a partial dict must still name
-	`callpeaks_format`, whose default is None."""
+	"""The preprocessing node, with every key not given at its default."""
 
-	return dict(default_pipeline_parameters["preprocessing_parameters"],
-		**kwargs)
+	return PreprocessConfig(**kwargs)
 
 
 ##
@@ -68,7 +66,7 @@ def test_conversion_runs_figwig_bam2bw_on_signals_and_controls(tmp_path,
 
 	assert _conversions(commands) == [
 		["figwig", "bam2bw", "-s", str(tmp_path / "g.fa"), "-n", "demo",
-			"-ps", "0", "-ns", "0", "-sf", "1", "-p", "8", "-v",
+			"-ps", "0", "-ns", "0", "-sf", "1.0", "-p", "8", "-v",
 			str(tmp_path / "s.bam")],
 		["figwig", "bam2bw", "-s", str(tmp_path / "g.fa"), "-n",
 			"demo.control", "-ps", "0", "-ns", "0", "-p", "8", "-v",
@@ -86,7 +84,7 @@ def test_conversion_passes_n_jobs_as_cores(n_jobs, tmp_path, run_pipeline):
 
 	commands = _run(run_pipeline, signals=[str(tmp_path / "s.bam")],
 		controls=[str(tmp_path / "c.bam")],
-		preprocessing_parameters=_preprocessing(n_jobs=n_jobs))
+		preprocessing=_preprocessing(n_jobs=n_jobs))
 
 	for cmd in _conversions(commands):
 		assert cmd[cmd.index("-p") + 1] == str(n_jobs)
@@ -98,7 +96,7 @@ def test_conversion_skipped_for_bigwig_signals(run_pipeline):
 
 
 @pytest.mark.parametrize("unstranded", [False, True])
-def test_conversion_writes_the_bigwigs_the_fit_json_names(unstranded,
+def test_conversion_writes_the_bigwigs_the_fit_config_names(unstranded,
 		tmp_path, run_pipeline):
 	"""The real `figwig bam2bw` writes the files that `signals` is
 	rewritten to, with each read's 5' end counted on its strand: the start
@@ -107,7 +105,7 @@ def test_conversion_writes_the_bigwigs_the_fit_json_names(unstranded,
 	pysam = pytest.importorskip("pysam")
 	from figwig import read_bigwig
 
-	# Not g.fa, which the `pipeline_json` fixture empties on every call.
+	# Not g.fa, which the `pipeline_config` fixture empties on every call.
 	(tmp_path / "genome.fa").write_text(">chr1\n" + "ACGT" * 250 + "\n")
 
 	header = {"HD": {"VN": "1.6", "SO": "coordinate"},
@@ -128,11 +126,11 @@ def test_conversion_writes_the_bigwigs_the_fit_json_names(unstranded,
 	_run(run_pipeline, real_conversion=True,
 		sequences=str(tmp_path / "genome.fa"),
 		signals=[str(tmp_path / "s.bam")],
-		preprocessing_parameters=_preprocessing(unstranded=unstranded,
+		preprocessing=_preprocessing(unstranded=unstranded,
 			n_jobs=1))
 
-	with open(tmp_path / "demo.fit.json") as f:
-		signals = json.load(f)["signals"]
+	signals = OmegaConf.to_container(OmegaConf.load(tmp_path
+		/ "demo.fit.yaml").signals)
 
 	expected = numpy.zeros((2, 1000), dtype=numpy.float32)
 	expected[0, 100] = 2

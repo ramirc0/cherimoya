@@ -8,7 +8,6 @@ on that advice from the CLI.
 """
 
 import dataclasses
-import json
 from unittest import mock
 
 import pytest
@@ -112,25 +111,26 @@ def test_forwards_compile_mode(command, tmp_path):
 
 def test_pipeline_shares_the_compile_setting(tmp_path, run_pipeline):
 	"""Set once at the pipeline top level, the value reaches the
-	per-step JSONs, the same way `dtype` and `device` do."""
+	per-step YAMLs, the same way `dtype` and `device` do."""
 
-	from cherimoya_cli.defaults import default_pipeline_parameters
+	from cherimoya_cli.config import PipelineConfig
 
-	assert default_pipeline_parameters["compile"] is True
-	assert default_pipeline_parameters["compile_mode"] == "max-autotune"
+	assert PipelineConfig.compile is True
+	assert PipelineConfig.compile_mode == "max-autotune"
 
-	run_pipeline(compile=False, compile_mode="reduce-overhead")
+	run_pipeline(compile=False, compile_mode="reduce-overhead",
+		motifs=str(tmp_path / "m.meme"))
 
-	# The attribute step pins its own `compile` but inherits the mode. The
-	# fit JSON is what `fit` copies into both evaluate JSONs.
-	with open(tmp_path / "demo.attribute.json") as f:
-		emitted = json.load(f)
+	emitted = OmegaConf.load(tmp_path / "demo.marginalize.yaml")
+	assert emitted.compile is False
+	assert emitted.compile_mode == "reduce-overhead"
 
-	assert emitted["compile"] is False
-	assert emitted["compile_mode"] == "reduce-overhead"
+	# The attribute step pins its own `compile` but inherits the mode.
+	emitted = OmegaConf.load(tmp_path / "demo.attribute.yaml")
+	assert emitted.compile_mode == "reduce-overhead"
 
-	with open(tmp_path / "demo.fit.json") as f:
-		emitted = json.load(f)
-
-	assert emitted["compile"] is False
-	assert emitted["compile_mode"] == "reduce-overhead"
+	# fit builds the training model with the setting and copies it into
+	# both evaluate configs.
+	emitted = OmegaConf.load(tmp_path / "demo.fit.yaml")
+	assert emitted.compile is False
+	assert emitted.compile_mode == "reduce-overhead"
