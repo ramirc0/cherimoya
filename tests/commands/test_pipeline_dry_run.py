@@ -1,4 +1,4 @@
-"""Tests that `dry_run` emits the per-step JSONs without running anything.
+"""Tests that `dry_run` emits the per-step YAMLs without running anything.
 
 `dry_run` is how a pipeline config is checked before committing hours of
 GPU time to it, so it has to complete on exactly the configurations a
@@ -12,7 +12,7 @@ the common case and the only one that reaches the annotation step.
 
 def test_dry_run_with_motifs_writes_no_annotation_outputs(tmp_path,
 		run_pipeline):
-	"""A dry run emits the step JSONs and nothing else -- in particular
+	"""A dry run emits the step YAMLs and nothing else -- in particular
 	not the tomtom-lite outputs, which would otherwise be empty files
 	standing in for real results."""
 
@@ -22,59 +22,86 @@ def test_dry_run_with_motifs_writes_no_annotation_outputs(tmp_path,
 	assert not (tmp_path / "demo.motif_seqlet_count.tsv").exists()
 
 
-def test_dry_run_with_motifs_writes_the_step_jsons(tmp_path, run_pipeline):
-	"""The point of a dry run: every per-step JSON lands on disk so the
-	config can be inspected."""
+def test_dry_run_with_motifs_writes_the_step_yamls(tmp_path, run_pipeline):
+	"""The point of a dry run: every per-step YAML lands on disk so the
+	config can be inspected, and each one is a complete config for its
+	single-step command."""
 
-	run_pipeline(motifs=str(tmp_path / "m.meme"))
+	from omegaconf import OmegaConf
 
-	for name in ("demo.fit.json", "demo.attribute.json",
-			"demo.seqlets.json", "demo.marginalize.json"):
-		assert (tmp_path / name).exists(), name
+	from cherimoya_cli.config import SCHEMAS
+
+	run_pipeline(motifs=str(tmp_path / "m.meme"), model=None, negatives=None)
+
+	for command in ("negatives", "fit", "attribute", "seqlets",
+			"marginalize"):
+		step = OmegaConf.load(tmp_path / "demo.{}.yaml".format(command))
+		OmegaConf.merge(OmegaConf.structured(SCHEMAS[command]), step)
+		assert set(step) == set(SCHEMAS[command].__dataclass_fields__), command
 
 
-def test_dry_run_attribute_json_uses_deep_lift_shap_settings(tmp_path,
+def test_dry_run_assigns_the_produced_files(tmp_path, run_pipeline):
+	"""A produced negatives file and model reach the steps that read
+	them."""
+
+	from omegaconf import OmegaConf
+
+	run_pipeline(motifs=str(tmp_path / "m.meme"), model=None, negatives=None)
+
+	fit = OmegaConf.load(tmp_path / "demo.fit.yaml")
+	assert fit.negatives == ["demo.negatives.bed"]
+	for command in ("attribute", "marginalize"):
+		step = OmegaConf.load(tmp_path / "demo.{}.yaml".format(command))
+		assert step.model == "demo.torch", command
+
+
+def test_dry_run_attribute_yaml_uses_deep_lift_shap_settings(tmp_path,
 		run_pipeline):
 	"""The pipeline's shared `batch_size` (512) is sized for inference and
-	would reach the attribute step through `_extract_set`; the step pins
-	its own, and the seed comes from the top level."""
+	must not reach the attribute step; the step pins its own, and the seed
+	comes from the top level."""
 
-	import json
+	from omegaconf import OmegaConf
 
-	run_pipeline(motifs=str(tmp_path / "m.meme"))
+	run_pipeline(motifs=str(tmp_path / "m.meme"), random_state=7)
 
-	with open(tmp_path / "demo.attribute.json") as f:
-		step = json.load(f)
+	step = OmegaConf.load(tmp_path / "demo.attribute.yaml")
 
-	assert step["algorithm"] == "deep_lift_shap"
-	assert step["batch_size"] == 64
-	assert step["group"] == 0
-	assert step["n_shuffles"] == 20
-	assert step["random_state"] == 0
+	assert step.algorithm == "deep_lift_shap"
+	assert step.batch_size == 64
+	assert step.group == 0
+	assert step.n_shuffles == 20
+	assert step.random_state == 7
 	# The top-level `compile: true` is not inherited.
-	assert step["compile"] is False
+	assert step.compile is False
 
 
-def test_dry_run_marginalizes_over_the_negatives(tmp_path, run_pipeline):
+def test_dry_run_marginalizes_over_the_negatives(tmp_path, pipeline_config,
+		monkeypatch):
 	"""Motifs are inserted into background loci: the negatives, unless the
 	step names its own. The top-level `loci` are the peaks."""
 
-	import json
+	from omegaconf import OmegaConf
 
-	run_pipeline(motifs=str(tmp_path / "m.meme"))
-	with open(tmp_path / "demo.marginalize.json") as f:
-		assert json.load(f)["loci"] == [str(tmp_path / "n.bed")]
+	from cherimoya_cli.commands import pipeline
 
-	run_pipeline(motifs=str(tmp_path / "m.meme"),
-		marginalize_parameters={"loci": str(tmp_path / "x.bed")})
-	with open(tmp_path / "demo.marginalize.json") as f:
-		assert json.load(f)["loci"] == str(tmp_path / "x.bed")
+	monkeypatch.chdir(tmp_path)
+
+	pipeline.run(pipeline_config(motifs=str(tmp_path / "m.meme")))
+	step = OmegaConf.load(tmp_path / "demo.marginalize.yaml")
+	assert step.loci == [str(tmp_path / "n.bed")]
+
+	cfg = pipeline_config(motifs=str(tmp_path / "m.meme"))
+	cfg.marginalize.loci = str(tmp_path / "x.bed")
+	pipeline.run(cfg)
+	step = OmegaConf.load(tmp_path / "demo.marginalize.yaml")
+	assert step.loci == str(tmp_path / "x.bed")
 
 
 def test_pipeline_accepts_a_single_peak_file_as_a_string(tmp_path,
 		run_pipeline):
 	"""`loci` may be a bare path. The negatives step takes the first peak
-	file, which for a string used to be its first character."""
+	file, `${loci.0}`, which a bare string does not have."""
 
 	from unittest import mock
 

@@ -2,57 +2,35 @@
 # Author: Jacob Schreiber <jmschreiber91@gmail.com>
 
 
-def _validate_inputs(parameters):
-	"""Validate the inputs to the pipeline before any expensive work.
+def run(cfg):
+	"""Run every step of the pipeline in-process.
 
-	Checks that local files referenced by the JSON exist. Remote files
-	(http://, https://, gs://, s3://) are skipped because resolving them
-	requires network access. Raises FileNotFoundError listing every
-	missing path so users see all problems at once.
+	A null `loci`, `negatives` or `model` is produced by an earlier step:
+	peaks are called with MACS3, negatives are sampled, and a model is
+	trained. The produced value is assigned to the top-level key, so every
+	step node that interpolates it sees the new value. Before a step runs,
+	its resolved node is saved as `<name>.<command>.yaml`, which reruns
+	that step alone with `cherimoya <command> -p <name>.<command>.yaml`.
+	With `dry_run`, the step configs are saved and nothing is run. With
+	`skip`, nothing is saved or run.
 
-	The recursive ``_check`` walks lists, so it correctly handles the
-	grouped ``signals``/``controls`` form (``list`` of ``str`` or
-	``list`` of ``list[str]``).
+
+	Parameters
+	----------
+	cfg: omegaconf.DictConfig
+		The composed `pipeline` config. Its inputs must already be resolved
+		by `resolve_inputs`, and its top-level keys are overwritten with the
+		files the pipeline produces.
 	"""
 
-	import os
+	if cfg.skip:
+		return
 
-	def _is_local(path):
-		return not path.startswith(("http://", "https://", "gs://", "s3://"))
-
-	missing = []
-
-	def _check(path, label):
-		if path is None:
-			return
-		if isinstance(path, (list, tuple)):
-			for p in path:
-				_check(p, label)
-			return
-		if _is_local(path) and not os.path.exists(path):
-			missing.append("{}: {}".format(label, path))
-
-	_check(parameters.get("sequences"), "sequences")
-	_check(parameters.get("loci"), "loci")
-	_check(parameters.get("negatives"), "negatives")
-	_check(parameters.get("signals"), "signals")
-	_check(parameters.get("controls"), "controls")
-	_check(parameters.get("motifs"), "motifs")
-	_check(parameters.get("exclusion_lists"), "exclusion_lists")
-
-	if missing:
-		raise FileNotFoundError(
-			"Pipeline cannot start; the following inputs are missing:\n  - "
-			+ "\n  - ".join(missing)
-		)
-
-
-def run(args):
-	import json
 	import subprocess
 	import sys
 
 	import pandas
+	from omegaconf import OmegaConf
 
 	from cherimoya.io import normalize_signal_groups
 
@@ -61,53 +39,40 @@ def run(args):
 	from . import marginalize as marginalize_cmd
 	from . import negatives as negatives_cmd
 	from . import seqlets as seqlets_cmd
-	from ..defaults import (
-		default_fit_parameters,
-		default_attribute_parameters,
-		default_seqlet_parameters,
-		default_annotation_parameters,
-		default_marginalize_parameters,
-		default_pipeline_parameters,
-	)
-	from ..utils import _extract_set, _check_set, _json_config, merge_parameters
 
-	parameters = merge_parameters(args.parameters, default_pipeline_parameters)
-	if parameters["skip"]:
-		return
+	preprocess = cfg.preprocessing
+	pname = cfg.name
 
-	preprocess_parameters = merge_parameters(
-		parameters["preprocessing_parameters"],
-		default_pipeline_parameters["preprocessing_parameters"],
-	)
-
-	_validate_inputs(parameters)
-
-	# The negatives step reads the first peak file, which for a bare string
-	# would be its first character.
+	# The negatives step reads the first peak file, `${loci.0}`, which a
+	# bare string does not have.
 	for key in ("loci", "negatives"):
-		if isinstance(parameters[key], str):
-			parameters[key] = [parameters[key]]
+		if isinstance(cfg[key], str):
+			cfg[key] = [cfg[key]]
 
-	pname = parameters["name"]
+	def save(node, command):
+		OmegaConf.save(node, "{}.{}.yaml".format(pname, command), resolve=True)
 
 	# Flatten any grouped signals/controls early — every preprocessing
 	# step (MACS3 callpeak, bam2bw, file-extension sniffing) operates on
 	# the underlying files regardless of how they're grouped for the
-	# model. The downstream fit step receives the *original* grouped
-	# form via the pipeline JSON, so grouping is preserved end-to-end.
-	signal_files, _ = normalize_signal_groups(parameters["signals"])
-	control_files, _ = normalize_signal_groups(parameters["controls"])
+	# model. The fit step reads the *original* grouped form from the
+	# config, so grouping is preserved end-to-end.
+	inputs = OmegaConf.to_container(OmegaConf.masked_copy(cfg,
+		["signals", "controls"]))
+	signal_files, _ = normalize_signal_groups(inputs["signals"])
+	control_files, _ = normalize_signal_groups(inputs["controls"])
 
 	###
 	# Step 0.1: Run MACS3 to call peaks if not provided
 	###
 
-	if parameters["loci"] is None:
-		if preprocess_parameters["verbose"]:
+	if cfg.loci is None:
+		if preprocess.verbose:
 			print("\nStep 0.1: Call peaks using MACS3.")
 
-		if preprocess_parameters["callpeaks_format"] is None:
-			if preprocess_parameters["fragments"]:
+		file_format = preprocess.callpeaks_format
+		if file_format is None:
+			if preprocess.fragments:
 				file_format = "FRAG"
 			else:
 				fname = signal_files[0]
@@ -117,22 +82,20 @@ def run(args):
 				else:
 					file_format = fname.split(".")[-1].upper()
 
-				if preprocess_parameters["paired_end"]:
+				if preprocess.paired_end:
 					file_format += "PE"
-
-			preprocess_parameters["callpeaks_format"] = file_format
 
 		cmd_args = [
 			"macs3",
 			"callpeak",
 			"-f",
-			preprocess_parameters["callpeaks_format"],
+			file_format,
 			"-g",
-			str(preprocess_parameters["callpeaks_gsize"]),
+			str(preprocess.callpeaks_gsize),
 			"-n",
 			pname,
 			"-q",
-			str(preprocess_parameters["callpeaks_q"]),
+			str(preprocess.callpeaks_q),
 			"-t",
 		]
 
@@ -142,12 +105,12 @@ def run(args):
 			cmd_args += ["-c"]
 			cmd_args.extend(control_files)
 
-		if preprocess_parameters["fragments"]:
+		if preprocess.fragments:
 			cmd_args += ["--max-count", "1"]
 
-		parameters["loci"] = [pname + "_peaks.narrowPeak"]
+		cfg.loci = [pname + "_peaks.narrowPeak"]
 
-		if not parameters["dry_run"]:
+		if not cfg.dry_run:
 			subprocess.run(cmd_args, check=True)
 
 	###
@@ -157,87 +120,87 @@ def run(args):
 	ftypes = ".sam", ".bam", ".bed", ".bed.gz", ".tsv", ".tsv.gz"
 
 	if signal_files[0].endswith(ftypes):
-		if preprocess_parameters["verbose"]:
+		if preprocess.verbose:
 			print("Step 0.2: Convert data to bigWigs")
 
 		cmd_args = [
 			"bam2bw",
 			"-s",
-			parameters["sequences"],
+			cfg.sequences,
 			"-n",
 			pname,
 			"-ps",
-			str(preprocess_parameters["pos_shift"]),
+			str(preprocess.pos_shift),
 			"-ns",
-			str(preprocess_parameters["neg_shift"]),
+			str(preprocess.neg_shift),
 			"-sf",
-			str(preprocess_parameters["scale_factor"]),
+			str(preprocess.scale_factor),
 			"-p",
 			"-1",
 		]
 
-		if preprocess_parameters["read_depth"]:
+		if preprocess.read_depth:
 			cmd_args += ["-r"]
 
-		if preprocess_parameters["unstranded"]:
+		if preprocess.unstranded:
 			cmd_args += ["-u"]
 
-		if preprocess_parameters["fragments"]:
+		if preprocess.fragments:
 			cmd_args += ["-f"]
 
-		if preprocess_parameters["verbose"]:
+		if preprocess.verbose:
 			cmd_args += ["-v"]
 
 		cmd_args += signal_files
-		if not parameters["dry_run"]:
+		if not cfg.dry_run:
 			subprocess.run(cmd_args, check=True)
 
 		# After conversion, rewrite `signals` in the grouped form so the
-		# downstream fit JSON declares strandedness correctly. Unstranded
-		# bam2bw produces one bigWig — one unstranded group. Stranded
-		# bam2bw produces a (+, -) pair which must be wrapped in an
-		# inner list to land as a single stranded group.
-		if preprocess_parameters["unstranded"]:
-			parameters["signals"] = [pname + ".bw"]
+		# fit step declares strandedness correctly. Unstranded bam2bw
+		# produces one bigWig — one unstranded group. Stranded bam2bw
+		# produces a (+, -) pair which must be wrapped in an inner list
+		# to land as a single stranded group.
+		if preprocess.unstranded:
+			cfg.signals = [pname + ".bw"]
 		else:
-			parameters["signals"] = [[pname + ".+.bw", pname + ".-.bw"]]
+			cfg.signals = [[pname + ".+.bw", pname + ".-.bw"]]
 
 	if control_files is not None:
 		if control_files[0].endswith(ftypes):
 			cmd_args = [
 				"bam2bw",
 				"-s",
-				parameters["sequences"],
+				cfg.sequences,
 				"-n",
 				pname + ".control",
 				"-ps",
-				str(preprocess_parameters["pos_shift"]),
+				str(preprocess.pos_shift),
 				"-ns",
-				str(preprocess_parameters["neg_shift"]),
+				str(preprocess.neg_shift),
 				"-p",
 				"-1",
 			]
 
-			if preprocess_parameters["read_depth"]:
+			if preprocess.read_depth:
 				cmd_args += ["-r"]
 
-			if preprocess_parameters["unstranded"]:
+			if preprocess.unstranded:
 				cmd_args += ["-u"]
 
-			if preprocess_parameters["fragments"]:
+			if preprocess.fragments:
 				cmd_args += ["-f"]
 
-			if preprocess_parameters["verbose"]:
+			if preprocess.verbose:
 				cmd_args += ["-v"]
 
 			cmd_args += control_files
-			if not parameters["dry_run"]:
+			if not cfg.dry_run:
 				subprocess.run(cmd_args, check=True)
 
-			if preprocess_parameters["unstranded"]:
-				parameters["controls"] = [pname + ".control.bw"]
+			if preprocess.unstranded:
+				cfg.controls = [pname + ".control.bw"]
 			else:
-				parameters["controls"] = [
+				cfg.controls = [
 					[pname + ".control.+.bw", pname + ".control.-.bw"]
 				]
 
@@ -245,140 +208,90 @@ def run(args):
 	# Step 0.3: Identify GC-matched negative regions
 	###
 
-	if parameters["negatives"] is None:
-		if preprocess_parameters["verbose"]:
+	if cfg.negatives is None:
+		if preprocess.verbose:
 			print("\nStep 0.3: Find GC-matched negative regions.")
 
-		negatives_config = _json_config("negatives", dict(
-			peaks=parameters["loci"][0],
-			fasta=parameters["sequences"],
-			bigwig=None,
-			output=pname + ".negatives.bed",
-			bin_width=0.02,
-			max_n_perc=0.1,
-			beta=0.5,
-			in_window=parameters["in_window"],
-			out_window=parameters["out_window"],
-			verbose=preprocess_parameters["verbose"],
-		))
+		save(cfg.negative_sampling, "negatives")
+		cfg.negatives = [cfg.negative_sampling.output]
 
-		parameters["negatives"] = [pname + ".negatives.bed"]
-
-		if not parameters["dry_run"]:
-			negatives_cmd.run(negatives_config)
+		if not cfg.dry_run:
+			negatives_cmd.run(cfg.negative_sampling)
 
 	###
 	# Step 1: Fit a Cherimoya model to the provided data
 	###
 
-	if parameters["verbose"]:
+	if cfg.verbose:
 		print("\nStep 1: Fitting a Cherimoya model")
 
-	fit_parameters = _extract_set(parameters, default_fit_parameters, "fit_parameters")
-
-	if parameters.get("model", None) == None:
-		name = pname + ".fit.json"
-		parameters["model"] = pname + ".torch"
-
-		with open(name, "w") as outfile:
-			outfile.write(json.dumps(fit_parameters, sort_keys=True, indent=4))
+	if cfg.model is None:
+		cfg.model = pname + ".torch"
+		save(cfg.fit, "fit")
 
 		# With more than one device, Lightning starts the other ranks by
 		# re-running the current command, which here would re-run the whole
 		# pipeline, so the fit gets a command line of its own.
-		if fit_parameters.get("devices", default_fit_parameters["devices"]) != 1:
-			if not parameters["dry_run"]:
-				subprocess.run([sys.executable, "-m", "cherimoya_cli", "fit",
-					"-p", name], check=True)
-		elif not parameters["dry_run"]:
-			fit_cmd.run(_json_config("fit", fit_parameters))
+		if not cfg.dry_run and cfg.fit.devices != 1:
+			subprocess.run([sys.executable, "-m", "cherimoya_cli", "fit", "-p",
+				"{}.fit.yaml".format(pname)], check=True)
+		elif not cfg.dry_run:
+			fit_cmd.run(cfg.fit)
+			# Records the seed fit drew if `random_state` was null.
+			save(cfg.fit, "fit")
 
 	###
 	# Step 2: Calculate attributions
 	###
 
-	if parameters["verbose"]:
+	if cfg.verbose:
 		print("\nStep 2: Calculating attributions")
 
-	attribute_parameters = _extract_set(
-		parameters, default_attribute_parameters, "attribute_parameters"
-	)
-	_check_set(attribute_parameters, "ohe_filename", pname + ".attributions.ohe.npz")
-	_check_set(attribute_parameters, "attr_filename", pname + ".attributions.attr.npz")
-	_check_set(attribute_parameters, "idx_filename", pname + ".attributions.idxs.npy")
-
-	name = "{}.attribute.json".format(parameters["name"])
-	with open(name, "w") as outfile:
-		outfile.write(json.dumps(attribute_parameters, sort_keys=True, indent=4))
-
-	if not parameters["dry_run"]:
-		attribute_cmd.run(_json_config("attribute", attribute_parameters))
+	save(cfg.attribute, "attribute")
+	if not cfg.dry_run:
+		attribute_cmd.run(cfg.attribute)
 
 	###
 	# Step 3.1: Identify seqlets from attributions
 	###
 
-	if parameters["verbose"]:
+	if cfg.verbose:
 		print("\nStep 3.1: Seqlet identification")
 
-	seqlet_parameters = _extract_set(
-		parameters, default_seqlet_parameters, "seqlet_parameters"
-	)
-	_check_set(seqlet_parameters, "ohe_filename", pname + ".attributions.ohe.npz")
-	_check_set(seqlet_parameters, "attr_filename", pname + ".attributions.attr.npz")
-	_check_set(seqlet_parameters, "idx_filename", pname + ".attributions.idxs.npy")
-	_check_set(seqlet_parameters, "output_filename", pname + ".seqlets.bed")
-	_check_set(seqlet_parameters, "chroms", attribute_parameters["chroms"])
-
-	name = "{}.seqlets.json".format(parameters["name"])
-	with open(name, "w") as outfile:
-		outfile.write(json.dumps(seqlet_parameters, sort_keys=True, indent=4))
-
-	if not parameters["dry_run"]:
-		seqlets_cmd.run(_json_config("seqlets", seqlet_parameters))
+	save(cfg.seqlets, "seqlets")
+	if not cfg.dry_run:
+		seqlets_cmd.run(cfg.seqlets)
 
 	###
 	# Step 3.2: Annotate seqlets using motif database
 	###
 
-	annotation_parameters = _extract_set(
-		parameters, default_annotation_parameters, "annotation_parameters"
-	)
-	_check_set(annotation_parameters, "seqlet_filename", pname + ".seqlets.bed")
-	_check_set(
-		annotation_parameters, "output_filename", pname + ".seqlets_annotated.bed"
-	)
-	_check_set(annotation_parameters, "motifs", parameters["motifs"])
+	annotation = cfg.annotation
 
-	annotation_parameters = merge_parameters(
-		annotation_parameters, default_annotation_parameters
-	)
-
-	if annotation_parameters["motifs"] is not None and not annotation_parameters["skip"]:
-		if parameters["verbose"]:
+	if annotation.motifs is not None and not annotation.skip:
+		if cfg.verbose:
 			print("\nStep 3.2: Seqlet annotation")
 
 		cmd = ["ttl"]
-		cmd += ["-f", annotation_parameters["sequences"]]
-		cmd += ["-b", annotation_parameters["seqlet_filename"]]
-		cmd += ["-s", str(annotation_parameters["n_score_bins"])]
-		cmd += ["-m", str(annotation_parameters["n_median_bins"])]
-		cmd += ["-a", str(annotation_parameters["n_target_bins"])]
-		cmd += ["-c", str(annotation_parameters["n_cache"])]
-		cmd += ["-j", str(annotation_parameters["n_jobs"])]
+		cmd += ["-f", annotation.sequences]
+		cmd += ["-b", annotation.seqlet_filename]
+		cmd += ["-s", str(annotation.n_score_bins)]
+		cmd += ["-m", str(annotation.n_median_bins)]
+		cmd += ["-a", str(annotation.n_target_bins)]
+		cmd += ["-c", str(annotation.n_cache)]
+		cmd += ["-j", str(annotation.n_jobs)]
 
-		if not annotation_parameters["reverse_complement"]:
+		if not annotation.reverse_complement:
 			cmd += ["-r"]
 
-		if annotation_parameters["motifs"] is not None:
-			cmd += ["-t", annotation_parameters["motifs"]]
+		cmd += ["-t", annotation.motifs]
 
-		if not parameters["dry_run"]:
-			with open(annotation_parameters["output_filename"], "w") as f:
+		if not cfg.dry_run:
+			with open(annotation.output_filename, "w") as f:
 				subprocess.run(cmd, check=True, stdout=f)
 
 			annotated_seqlets = pandas.read_csv(
-				annotation_parameters["output_filename"],
+				annotation.output_filename,
 				sep="\t",
 				header=None,
 				usecols=(3,),
@@ -392,104 +305,66 @@ def run(args):
 	# Step 4.1: Run TF-MoDISco
 	###
 
-	if parameters["verbose"]:
+	if cfg.verbose:
 		print("\nStep 4.1: TF-MoDISco motifs")
 
-	modisco_parameters = parameters["modisco_motifs_parameters"]
+	modisco = cfg.modisco_motifs
 
-	_check_set(modisco_parameters, "output_filename", pname + "_modisco_results.h5")
-	_check_set(modisco_parameters, "verbose", parameters["verbose"])
+	cmd = [
+		"modisco",
+		"motifs",
+		"-s",
+		cfg.attribute.ohe_filename,
+		"-a",
+		cfg.attribute.attr_filename,
+		"-n",
+		str(modisco.n_seqlets),
+		"-o",
+		modisco.output_filename,
+	]
 
-	modisco_parameters = merge_parameters(
-		modisco_parameters, default_pipeline_parameters["modisco_motifs_parameters"]
-	)
+	if modisco.verbose or cfg.verbose:
+		cmd += ["-v"]
 
-	cmd = "modisco motifs -s {} -a {} -n {} -o {}".format(
-		attribute_parameters["ohe_filename"],
-		attribute_parameters["attr_filename"],
-		modisco_parameters["n_seqlets"],
-		modisco_parameters["output_filename"],
-	)
-
-	if "verbose" in modisco_parameters and modisco_parameters["verbose"]:
-		cmd += " -v"
-	elif parameters["verbose"]:
-		cmd += " -v"
-
-	if not parameters["dry_run"]:
-		subprocess.run(cmd.split(), check=True)
+	if not cfg.dry_run:
+		subprocess.run(cmd, check=True)
 
 	###
 	# Step 4.2: Generate the tf-modisco report
 	###
 
-	report_parameters = parameters["modisco_report_parameters"]
-	_check_set(report_parameters, "verbose", parameters["verbose"])
-	_check_set(report_parameters, "output_folder", pname + "_modisco/")
-	_check_set(report_parameters, "motifs", parameters["motifs"])
+	report = cfg.modisco_report
 
-	if report_parameters["verbose"]:
+	if report.verbose:
 		print("\nStep 4.2: TF-MoDISco reports")
 
-	if not parameters["dry_run"]:
-		if report_parameters["motifs"] is not None:
-			subprocess.run(
-				[
-					"modisco",
-					"report",
-					"-i",
-					modisco_parameters["output_filename"],
-					"-o",
-					report_parameters["output_folder"],
-					"-s",
-					"./",
-					"-m",
-					report_parameters["motifs"],
-				],
-				check=True,
-			)
-		else:
-			subprocess.run(
-				[
-					"modisco",
-					"report",
-					"-i",
-					modisco_parameters["output_filename"],
-					"-o",
-					report_parameters["output_folder"],
-					"-s",
-					"./",
-				],
-				check=True,
-			)
+	cmd = [
+		"modisco",
+		"report",
+		"-i",
+		modisco.output_filename,
+		"-o",
+		report.output_folder,
+		"-s",
+		"./",
+	]
+
+	if report.motifs is not None:
+		cmd += ["-m", report.motifs]
+
+	if not cfg.dry_run:
+		subprocess.run(cmd, check=True)
 
 	###
 	# Step 5: Marginalization experiments
 	###
 
-	if parameters["motifs"] is None:
+	if cfg.motifs is None:
 		return
 
-	if parameters["verbose"]:
+	if cfg.verbose:
 		print("\nStep 5: Run marginalizations")
 
-	marginalize_parameters = _extract_set(
-		parameters, default_marginalize_parameters, "marginalize_parameters"
-	)
-
-	# The motifs are inserted into background loci. `_extract_set` has
-	# already copied the top-level `loci`, the peaks, so the negatives are
-	# set here unless the step names its own loci.
-	marginalize_parameters["loci"] = (
-		parameters["marginalize_parameters"]["loci"] or parameters["negatives"])
-	_check_set(marginalize_parameters, "output_filename", pname + "_marginalize/")
-	_check_set(marginalize_parameters, "motifs", parameters["motifs"])
-
-	name = "{}.marginalize.json".format(parameters["name"])
-
-	with open(name, "w") as outfile:
-		outfile.write(json.dumps(marginalize_parameters, sort_keys=True, indent=4))
-
-	if not parameters["dry_run"]:
-		marginalize_cmd.run(_json_config("marginalize",
-			marginalize_parameters))
+	save(cfg.marginalize, "marginalize")
+	if not cfg.dry_run:
+		marginalize_cmd.run(cfg.marginalize)

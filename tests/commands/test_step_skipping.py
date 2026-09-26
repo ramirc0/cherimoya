@@ -109,7 +109,8 @@ def test_pipeline_json_accepts_all_four():
 
 def test_pipeline_skip_runs_no_step(tmp_path, run_pipeline):
 	"""A top-level `skip` ends the pipeline before any step, including the
-	preprocessing and MoDISco commands that have no `skip` of their own."""
+	preprocessing and MoDISco commands that have no `skip` of their own.
+	No step config is saved either."""
 
 	from unittest import mock
 
@@ -117,19 +118,25 @@ def test_pipeline_skip_runs_no_step(tmp_path, run_pipeline):
 		run_pipeline(skip=True, dry_run=False, loci=None)
 
 	subprocess_run.assert_not_called()
-	assert not (tmp_path / "demo.fit.json").exists()
+	assert not list(tmp_path.glob("demo.*.yaml"))
 
 
-def test_pipeline_skips_annotation_when_asked(tmp_path, run_pipeline):
+def test_pipeline_skips_annotation_when_asked(tmp_path, pipeline_config,
+		monkeypatch):
 	from unittest import mock
+
+	from cherimoya_cli.commands import pipeline
+
+	cfg = pipeline_config(motifs=str(tmp_path / "m.meme"), dry_run=False)
+	cfg.annotation.skip = True
+	monkeypatch.chdir(tmp_path)
 
 	with mock.patch("subprocess.run") as subprocess_run, \
 			mock.patch("cherimoya_cli.commands.fit.run"), \
 			mock.patch("cherimoya_cli.commands.attribute.run"), \
 			mock.patch("cherimoya_cli.commands.seqlets.run"), \
 			mock.patch("cherimoya_cli.commands.marginalize.run"):
-		run_pipeline(motifs=str(tmp_path / "m.meme"), dry_run=False,
-			annotation_parameters={"skip": True})
+		pipeline.run(cfg)
 
 	commands = [call.args[0][0] for call in subprocess_run.call_args_list]
 	assert "ttl" not in commands

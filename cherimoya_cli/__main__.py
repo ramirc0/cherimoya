@@ -26,6 +26,7 @@ HYDRA_COMMANDS = {
 		"with DeepLIFT/SHAP (default) or saturation mutagenesis.",
 	"seqlets": "Identify seqlets from attributions.",
 	"marginalize": "Run marginalizations given motifs.",
+	"pipeline": "Run each step on the given files.",
 }
 
 
@@ -137,18 +138,6 @@ def _setup_parsers() -> argparse.ArgumentParser:
 		help="Whether to scale the read counts. 1 is no scaling.",
 	)
 
-	# Pipeline
-	pipeline_parser = subparsers.add_parser(
-		"pipeline", help="Run each step on the given files."
-	)
-	pipeline_parser.add_argument(
-		"-p",
-		"--parameters",
-		type=str,
-		required=True,
-		help="A JSON file containing the parameters used for each step.",
-	)
-
 	# Install skill
 	install_skill_parser = subparsers.add_parser(
 		"install-skill",
@@ -186,7 +175,8 @@ def _task(command):
 
 		missing = missing_keys(cfg)
 		if missing:
-			raise ValueError("Must provide a value for: {}".format(
+			raise ValueError("Must provide a value for: {}. Set a key to "
+				"null if an earlier pipeline step produces it.".format(
 				", ".join(sorted(missing))))
 
 		resolve_inputs(cfg)
@@ -229,7 +219,6 @@ def main():
 
 	COMMANDS = {
 		"pipeline-json": "pipeline_json",
-		"pipeline": "pipeline",
 		"install-skill": "install_skill",
 	}
 
