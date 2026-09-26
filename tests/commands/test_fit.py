@@ -761,11 +761,12 @@ def test_fit_banner_names_the_loss_balancing_in_force(fit_json, capsys,
 
 def _run_fit_evaluations(fit_json, tmp_path, monkeypatch):
 	"""Run `fit.run` through its evaluate step with training and data
-	loading faked, and return the evaluate JSONs it passed on, in order."""
+	loading faked, and return the evaluate configs it passed on, in order."""
 
 	import types
 
 	import torch
+	from omegaconf import OmegaConf
 
 	from cherimoya_cli.commands import fit as fit_cmd
 
@@ -775,8 +776,8 @@ def _run_fit_evaluations(fit_json, tmp_path, monkeypatch):
 	def fake_extract_loci(**kwargs):
 		return torch.zeros(1, 4, 16), torch.zeros(1, 1, 8)
 
-	def fake_evaluate(args):
-		evaluated.append((args.parameters, json.loads(open(args.parameters).read())))
+	def fake_evaluate(cfg):
+		evaluated.append(OmegaConf.to_container(cfg))
 
 	with mock.patch("cherimoya.io.PeakGenerator",
 				return_value=_FakeLoader([None] * 4)), \
@@ -798,13 +799,16 @@ def test_fit_evaluates_the_validation_and_test_chromosomes(fit_json, tmp_path,
 
 	evaluated = _run_fit_evaluations(fit_json, tmp_path, monkeypatch)
 
-	assert [(name, cfg['chroms'], cfg['performance_filename'], cfg['model'])
-		for name, cfg in evaluated] == [
-		("fit_wiring_test.validation.evaluate.json", validation_chroms,
-			"fit_wiring_test.validation.performance.tsv", "fit_wiring_test.torch"),
-		("fit_wiring_test.test.evaluate.json", test_chroms,
-			"fit_wiring_test.test.performance.tsv", "fit_wiring_test.torch"),
+	assert [(cfg['chroms'], cfg['performance_filename'], cfg['model'])
+		for cfg in evaluated] == [
+		(validation_chroms, "fit_wiring_test.validation.performance.tsv",
+			"fit_wiring_test.torch"),
+		(test_chroms, "fit_wiring_test.test.performance.tsv",
+			"fit_wiring_test.torch"),
 	]
+	for split in ("validation", "test"):
+		assert (tmp_path / "fit_wiring_test.{}.evaluate.json".format(
+			split)).exists()
 
 
 def test_fit_skips_the_test_evaluation_without_test_chromosomes(fit_json,
@@ -814,8 +818,8 @@ def test_fit_skips_the_test_evaluation_without_test_chromosomes(fit_json,
 	open(fit_json, 'w').write(json.dumps(cfg))
 
 	evaluated = _run_fit_evaluations(fit_json, tmp_path, monkeypatch)
-	assert [name for name, _ in evaluated] == [
-		"fit_wiring_test.validation.evaluate.json"]
+	assert [cfg['performance_filename'] for cfg in evaluated] == [
+		"fit_wiring_test.validation.performance.tsv"]
 
 
 @pytest.mark.parametrize("key", ["validation_chroms", "test_chroms"])

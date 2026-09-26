@@ -2,21 +2,31 @@
 # Author: Jacob Schreiber <jmschreiber91@gmail.com>
 
 
-def run(args):
+def run(cfg):
+	"""Sample GC-matched negatives for a peak file and write them as a BED
+	file.
+
+
+	Parameters
+	----------
+	cfg: omegaconf.DictConfig
+		A config typed by `cherimoya_cli.config.NegativesConfig`.
+	"""
+
 	from tangermeme.match import extract_matching_loci
 
 	matched_loci = extract_matching_loci(
-		loci=args.peaks,
-		fasta=args.fasta,
-		gc_bin_width=args.bin_width,
-		max_n_perc=args.max_n_perc,
-		bigwig=args.bigwig,
-		signal_beta=args.beta,
-		in_window=args.in_window,
-		out_window=args.out_window,
+		loci=cfg.peaks,
+		fasta=cfg.fasta,
+		gc_bin_width=cfg.bin_width,
+		max_n_perc=cfg.max_n_perc,
+		bigwig=cfg.bigwig,
+		signal_beta=cfg.beta,
+		in_window=cfg.in_window,
+		out_window=cfg.out_window,
 		chroms=None,
-		verbose=args.verbose,
+		verbose=cfg.verbose,
 		n_jobs=1,
 	)
 
-	matched_loci.to_csv(args.output, header=False, sep="\t", index=False)
+	matched_loci.to_csv(cfg.output, header=False, sep="\t", index=False)

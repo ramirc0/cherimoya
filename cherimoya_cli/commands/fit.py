@@ -88,7 +88,6 @@ def _loss_balance_summary(loss_weights, lw_lr, lw_wd, lw_momentum):
 
 
 def run(args):
-	import argparse
 	import copy
 	import hashlib
 	import itertools
@@ -111,7 +110,7 @@ def run(args):
 
 	from . import evaluate as evaluate_cmd
 	from ..defaults import default_fit_parameters
-	from ..utils import merge_parameters
+	from ..utils import _json_config, merge_parameters
 
 	# With more than one device, Lightning starts every rank after the
 	# first by re-running this command, so everything up to the fit runs
@@ -391,4 +390,4 @@ def run(args):
 		with open(fname, "w") as outfile:
 			outfile.write(json.dumps(evaluate_parameters, sort_keys=True, indent=4))
 
-		evaluate_cmd.run(argparse.Namespace(parameters=fname))
+		evaluate_cmd.run(_json_config("evaluate", evaluate_parameters))

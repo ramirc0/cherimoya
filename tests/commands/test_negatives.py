@@ -1,27 +1,23 @@
 """Wiring tests for `cherimoya negatives`.
 
 The GC matching itself is tangermeme's; what is Cherimoya's is the
-argparse surface and the forwarding, which is what these cover.
+config surface and the forwarding, which is what these cover.
 """
 
-import argparse
 from unittest import mock
 
 import pandas
-import pytest
+from omegaconf import OmegaConf
 
-from cherimoya_cli.__main__ import _setup_parsers
-
-
-def _args(**overrides):
-	base = dict(peaks="peaks.bed", fasta="g.fa", bigwig=None,
-		output="out.bed", bin_width=0.02, max_n_perc=0.1, beta=0.5,
-		in_window=2114, out_window=1000, verbose=False)
-	base.update(overrides)
-	return argparse.Namespace(**base)
+from cherimoya_cli.config import NegativesConfig, missing_keys
 
 
-def _captured(args, tmp_path):
+def _config(**overrides):
+	return OmegaConf.structured(NegativesConfig(**{"peaks": "peaks.bed",
+		"fasta": "g.fa", "output": "out.bed", **overrides}))
+
+
+def _captured(cfg, tmp_path):
 	from cherimoya_cli.commands import negatives
 
 	captured = {}
@@ -31,12 +27,12 @@ def _captured(args, tmp_path):
 		captured.update(kwargs)
 		return frame
 
-	args.output = str(tmp_path / "out.bed")
+	cfg.output = str(tmp_path / "out.bed")
 	with mock.patch("tangermeme.match.extract_matching_loci",
 			side_effect=fake_match):
-		negatives.run(args)
+		negatives.run(cfg)
 
-	captured["_written"] = pandas.read_csv(args.output, sep="\t",
+	captured["_written"] = pandas.read_csv(cfg.output, sep="\t",
 		header=None)
 	return captured
 
@@ -45,11 +41,11 @@ def _captured(args, tmp_path):
 
 
 def test_negatives_forwards_every_flag(tmp_path):
-	"""Each CLI flag has to reach `extract_matching_loci` under the name
-	that function expects, which is not the flag's own name for most of
+	"""Each config key has to reach `extract_matching_loci` under the name
+	that function expects, which is not the key's own name for most of
 	them."""
 
-	captured = _captured(_args(bin_width=0.05, max_n_perc=0.2, beta=0.7,
+	captured = _captured(_config(bin_width=0.05, max_n_perc=0.2, beta=0.7,
 		in_window=1000, out_window=500), tmp_path)
 
 	assert captured["gc_bin_width"] == 0.05
@@ -63,49 +59,39 @@ def test_negatives_writes_a_headerless_bed(tmp_path):
 	"""The output feeds straight into `fit` as a locus file, so it must
 	be headerless and tab separated."""
 
-	captured = _captured(_args(), tmp_path)
+	captured = _captured(_config(), tmp_path)
 
 	assert list(captured["_written"].iloc[0]) == ["chr1", 100, 200]
 	assert len(captured["_written"].columns) == 3
 
 
 def test_negatives_bigwig_is_optional(tmp_path):
-	"""`--bigwig` sets a minimum-counts threshold; without it the
+	"""`bigwig` sets a minimum-counts threshold; without it the
 	threshold is off rather than the call failing."""
 
-	captured = _captured(_args(bigwig=None), tmp_path)
+	captured = _captured(_config(bigwig=None), tmp_path)
 
 	assert captured["bigwig"] is None
 
 
-def test_negatives_requires_peaks_and_output():
-	"""Both are marked required in the parser, so argparse rejects a
-	call without them rather than the command failing later."""
+def test_negatives_requires_peaks_fasta_and_output(make_config):
+	"""The three keys have no default, so a config without them is
+	rejected before the command runs rather than failing later."""
 
-	parser = _setup_parsers()
-	with pytest.raises(SystemExit):
-		parser.parse_args(["negatives", "-f", "g.fa"])
-
-
-def test_negatives_parser_defaults_match_the_documented_ones():
-	"""The flags carry their defaults in argparse rather than in a JSON,
-	so this is the only place they can drift from the CLI reference."""
-
-	args = _setup_parsers().parse_args(
-		["negatives", "-i", "peaks.bed", "-f", "genome.fa", "-o", "out.bed"])
-
-	assert args.bin_width == 0.02
-	assert args.max_n_perc == 0.1
-	assert args.beta == 0.5
-	assert args.in_window == 2114
-	assert args.out_window == 1000
-	assert args.verbose is False
+	assert missing_keys(make_config("negatives")) == {"peaks", "fasta",
+		"output"}
 
 
-def test_negatives_requires_the_fasta():
-	"""GC matching reads the genome, so leaving out `-f` fails in argparse
-	rather than partway through sampling."""
+def test_negatives_defaults_match_the_documented_ones(make_config):
+	"""The defaults the pipeline's negative sampling used to hard-code,
+	now shared with the command."""
 
-	with pytest.raises(SystemExit):
-		_setup_parsers().parse_args(["negatives", "-i", "peaks.bed", "-o",
-			"out.bed"])
+	cfg = make_config("negatives")
+
+	assert cfg.bin_width == 0.02
+	assert cfg.max_n_perc == 0.1
+	assert cfg.beta == 0.5
+	assert cfg.in_window == 2114
+	assert cfg.out_window == 1000
+	assert cfg.bigwig is None
+	assert cfg.verbose is False

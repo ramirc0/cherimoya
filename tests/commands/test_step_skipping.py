@@ -31,26 +31,35 @@ def _skip_cfg(defaults, **overrides):
 
 
 @pytest.mark.parametrize("command", ["evaluate", "attribute", "seqlets",
-	"marginalize", "fit"])
-def test_skip_returns_rather_than_exiting(tmp_path, command):
+	"marginalize"])
+def test_skip_returns_rather_than_exiting(command):
 	"""Every subcommand that honours `skip` must return, so the caller
 	decides what happens next."""
 
-	from cherimoya_cli import defaults as D
+	import dataclasses
 
-	defaults = {
-		"evaluate": D.default_evaluate_parameters,
-		"attribute": D.default_attribute_parameters,
-		"seqlets": D.default_seqlet_parameters,
-		"marginalize": D.default_marginalize_parameters,
-		"fit": D.default_fit_parameters,
-	}[command]
+	from omegaconf import MISSING, OmegaConf
+
+	from cherimoya_cli.config import SCHEMAS
+
+	schema = SCHEMAS[command]
+	required = {f.name: "x" for f in dataclasses.fields(schema)
+		if f.default == MISSING}
 
 	mod = __import__("cherimoya_cli.commands." + command, fromlist=["run"])
-	path = _write(tmp_path, command, _skip_cfg(defaults))
+	cfg = OmegaConf.structured(schema(skip=True, **required))
 
 	# Returns None rather than raising SystemExit.
-	assert mod.run(argparse.Namespace(parameters=path)) is None
+	assert mod.run(cfg) is None
+
+
+def test_fit_skip_returns_rather_than_exiting(tmp_path):
+	from cherimoya_cli import defaults as D
+	from cherimoya_cli.commands import fit
+
+	path = _write(tmp_path, "fit", _skip_cfg(D.default_fit_parameters))
+
+	assert fit.run(argparse.Namespace(parameters=path)) is None
 
 
 def test_pipeline_without_motifs_returns(run_pipeline):

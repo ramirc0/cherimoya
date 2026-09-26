@@ -3,6 +3,7 @@
 
 import argparse
 import importlib
+import sys
 from importlib.metadata import version, PackageNotFoundError
 
 desc = """A command-line tool for the training and usage of Cherimoya models."""
@@ -16,6 +17,16 @@ try:
 except PackageNotFoundError:
 	__version__ = "0.0.0+unknown"
 
+# Commands configured by Hydra; the rest still parse their own arguments.
+HYDRA_COMMANDS = {
+	"negatives": "Sample GC-matched negatives.",
+	"evaluate": "Evaluate a trained Cherimoya model.",
+	"attribute": "Calculate attributions using a trained Cherimoya model, "
+		"with DeepLIFT/SHAP (default) or saturation mutagenesis.",
+	"seqlets": "Identify seqlets from attributions.",
+	"marginalize": "Run marginalizations given motifs.",
+}
+
 
 def _setup_parsers() -> argparse.ArgumentParser:
 	parser = argparse.ArgumentParser(description=desc)
@@ -26,49 +37,8 @@ def _setup_parsers() -> argparse.ArgumentParser:
 	)
 	subparsers = parser.add_subparsers(help=_help, required=True, dest="cmd")
 
-	# Negatives
-	negatives_parser = subparsers.add_parser(
-		"negatives", help="Sample GC-matched negatives."
-	)
-	negatives_parser.add_argument("-i", "--peaks", required=True, help="Peak bed file.")
-	negatives_parser.add_argument("-f", "--fasta", required=True,
-		help="Genome FASTA file.")
-	negatives_parser.add_argument("-b", "--bigwig", help="Optional signal bigwig.")
-	negatives_parser.add_argument(
-		"-o", "--output", required=True, help="Output bed file."
-	)
-	negatives_parser.add_argument(
-		"-l", "--bin_width", type=float, default=0.02, help="GC bin width to match."
-	)
-	negatives_parser.add_argument(
-		"-n",
-		"--max_n_perc",
-		type=float,
-		default=0.1,
-		help="Maximum percentage of Ns allowed in each locus.",
-	)
-	negatives_parser.add_argument(
-		"-a",
-		"--beta",
-		type=float,
-		default=0.5,
-		help="Multiplier on the minimum counts in peaks.",
-	)
-	negatives_parser.add_argument(
-		"-w",
-		"--in_window",
-		type=int,
-		default=2114,
-		help="Width for calculating GC content.",
-	)
-	negatives_parser.add_argument(
-		"-x",
-		"--out_window",
-		type=int,
-		default=1000,
-		help="Non-overlapping stride to use for loci.",
-	)
-	negatives_parser.add_argument("-v", "--verbose", default=False, action="store_true")
+	for command, description in HYDRA_COMMANDS.items():
+		subparsers.add_parser(command, help=description)
 
 	# Pipeline JSON
 	pipeline_json_parser = subparsers.add_parser(
@@ -176,55 +146,6 @@ def _setup_parsers() -> argparse.ArgumentParser:
 		help="A JSON file containing the parameters for fitting the model.",
 	)
 
-	# Evaluate
-	evaluate_parser = subparsers.add_parser(
-		"evaluate", help="Evaluate a trained Cherimoya model."
-	)
-	evaluate_parser.add_argument(
-		"-p",
-		"--parameters",
-		type=str,
-		required=True,
-		help="A JSON file containing the parameters for making predictions.",
-	)
-
-	# Attribute
-	attribute_parser = subparsers.add_parser(
-		"attribute", help="Calculate attributions using a trained Cherimoya "
-		"model, with DeepLIFT/SHAP (default) or saturation mutagenesis."
-	)
-	attribute_parser.add_argument(
-		"-p",
-		"--parameters",
-		type=str,
-		required=True,
-		help="A JSON file containing the parameters for calculating attributions.",
-	)
-
-	# Seqlets
-	seqlets_parser = subparsers.add_parser(
-		"seqlets", help="Identify seqlets from attributions."
-	)
-	seqlets_parser.add_argument(
-		"-p",
-		"--parameters",
-		type=str,
-		required=True,
-		help="A JSON file containing the parameters for identifying seqlets.",
-	)
-
-	# Marginalize
-	marginalize_parser = subparsers.add_parser(
-		"marginalize", help="Run marginalizations given motifs."
-	)
-	marginalize_parser.add_argument(
-		"-p",
-		"--parameters",
-		type=str,
-		required=True,
-		help="A JSON file containing the parameters for running marginalizations.",
-	)
-
 	# Pipeline
 	pipeline_parser = subparsers.add_parser(
 		"pipeline", help="Run each step on the given files."
@@ -267,26 +188,63 @@ def _setup_parsers() -> argparse.ArgumentParser:
 	return parser
 
 
+def _task(command):
+	def task(cfg):
+		from .config import missing_keys
+		from .utils import resolve_inputs
+
+		missing = missing_keys(cfg)
+		if missing:
+			raise ValueError("Must provide a value for: {}".format(
+				", ".join(sorted(missing))))
+
+		resolve_inputs(cfg)
+		importlib.import_module(".commands." + command, __package__).run(cfg)
+
+	return task
+
+
+def _dispatch(command, argv):
+	"""Run a Hydra command. `-p FILE` layers a YAML file over the command's
+	schema, so the file is type-checked and `key=value` overrides still
+	apply on top of it. Hydra reserves `-p` for `--package`, so it is
+	consumed here before Hydra parses the rest."""
+
+	import hydra
+	from hydra.core.config_store import ConfigStore
+	from omegaconf import OmegaConf
+
+	from . import config  # noqa: F401 -- registers the schemas
+
+	if "-p" in argv:
+		i = argv.index("-p")
+		ConfigStore.instance().store(group="run", name="user",
+			node=OmegaConf.load(argv[i + 1]), package="_global_")
+		argv = argv[:i] + argv[i + 2:] + ["+run=user"]
+
+	sys.argv = ["cherimoya " + command] + argv
+	hydra.main(version_base="1.3", config_path="pkg://cherimoya_cli.conf",
+		config_name=command)(_task(command))()
+
+
 def main():
+	"""Entry point of the `cherimoya` console script."""
+
+	if len(sys.argv) > 1 and sys.argv[1] in HYDRA_COMMANDS:
+		return _dispatch(sys.argv[1], sys.argv[2:])
+
 	parser = _setup_parsers()
 	args = parser.parse_args()
 
 	COMMANDS = {
-		"negatives": "negatives",
 		"pipeline-json": "pipeline_json",
 		"fit": "fit",
-		"evaluate": "evaluate",
-		"attribute": "attribute",
-		"seqlets": "seqlets",
-		"marginalize": "marginalize",
 		"pipeline": "pipeline",
 		"install-skill": "install_skill",
 	}
 
-	modname = COMMANDS.get(args.cmd)
-	if modname is None:
-		parser.error(f"unknown command: {args.cmd}")
-	mod = importlib.import_module(f".commands.{modname}", package=__package__)
+	mod = importlib.import_module(f".commands.{COMMANDS[args.cmd]}",
+		package=__package__)
 	mod.run(args)
 
 

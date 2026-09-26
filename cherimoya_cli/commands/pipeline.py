@@ -70,7 +70,7 @@ def run(args):
 		default_marginalize_parameters,
 		default_pipeline_parameters,
 	)
-	from ..utils import _extract_set, _check_set, merge_parameters
+	from ..utils import _extract_set, _check_set, _json_config, merge_parameters
 
 	parameters = merge_parameters(args.parameters, default_pipeline_parameters)
 	if parameters["skip"]:
@@ -98,11 +98,6 @@ def run(args):
 	# form via the pipeline JSON, so grouping is preserved end-to-end.
 	signal_files, _ = normalize_signal_groups(parameters["signals"])
 	control_files, _ = normalize_signal_groups(parameters["controls"])
-
-	def _run_step(cmd_fn, json_path):
-		"""Invoke a CLI step in-process by calling its run(args) directly."""
-		if not parameters["dry_run"]:
-			cmd_fn(argparse.Namespace(parameters=json_path))
 
 	###
 	# Step 0.1: Run MACS3 to call peaks if not provided
@@ -255,7 +250,7 @@ def run(args):
 		if preprocess_parameters["verbose"]:
 			print("\nStep 0.3: Find GC-matched negative regions.")
 
-		negatives_args = argparse.Namespace(
+		negatives_config = _json_config("negatives", dict(
 			peaks=parameters["loci"][0],
 			fasta=parameters["sequences"],
 			bigwig=None,
@@ -266,12 +261,12 @@ def run(args):
 			in_window=parameters["in_window"],
 			out_window=parameters["out_window"],
 			verbose=preprocess_parameters["verbose"],
-		)
+		))
 
 		parameters["negatives"] = [pname + ".negatives.bed"]
 
 		if not parameters["dry_run"]:
-			negatives_cmd.run(negatives_args)
+			negatives_cmd.run(negatives_config)
 
 	###
 	# Step 1: Fit a Cherimoya model to the provided data
@@ -296,8 +291,8 @@ def run(args):
 			if not parameters["dry_run"]:
 				subprocess.run([sys.executable, "-m", "cherimoya_cli", "fit",
 					"-p", name], check=True)
-		else:
-			_run_step(fit_cmd.run, name)
+		elif not parameters["dry_run"]:
+			fit_cmd.run(argparse.Namespace(parameters=name))
 
 	###
 	# Step 2: Calculate attributions
@@ -317,7 +312,8 @@ def run(args):
 	with open(name, "w") as outfile:
 		outfile.write(json.dumps(attribute_parameters, sort_keys=True, indent=4))
 
-	_run_step(attribute_cmd.run, name)
+	if not parameters["dry_run"]:
+		attribute_cmd.run(_json_config("attribute", attribute_parameters))
 
 	###
 	# Step 3.1: Identify seqlets from attributions
@@ -339,7 +335,8 @@ def run(args):
 	with open(name, "w") as outfile:
 		outfile.write(json.dumps(seqlet_parameters, sort_keys=True, indent=4))
 
-	_run_step(seqlets_cmd.run, name)
+	if not parameters["dry_run"]:
+		seqlets_cmd.run(_json_config("seqlets", seqlet_parameters))
 
 	###
 	# Step 3.2: Annotate seqlets using motif database
@@ -494,4 +491,6 @@ def run(args):
 	with open(name, "w") as outfile:
 		outfile.write(json.dumps(marginalize_parameters, sort_keys=True, indent=4))
 
-	_run_step(marginalize_cmd.run, name)
+	if not parameters["dry_run"]:
+		marginalize_cmd.run(_json_config("marginalize",
+			marginalize_parameters))

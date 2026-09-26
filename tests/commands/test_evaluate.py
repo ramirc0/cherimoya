@@ -11,16 +11,16 @@ These tests mock `tangermeme.io.extract_loci` so they don't need any
 bigWig / FASTA fixtures.
 """
 
-import argparse
-import json
 from unittest import mock
 
 import pytest
 import torch
+from omegaconf import OmegaConf
 
 from tangermeme.predict import predict
 
 from cherimoya import Cherimoya
+from cherimoya_cli.config import EvaluateConfig
 
 
 PEAK_COLUMNS = ['profile_mnll', 'profile_jsd', 'profile_pearson',
@@ -69,30 +69,23 @@ def _run_evaluate(tmp_path, ckpt, signals, n_signal_ch, controls=None,
 	"""Run cherimoya evaluate end-to-end against the mocked
 	extract_loci, returning the parsed TSV (header, rows)."""
 	perf_path = tmp_path / "perf.tsv"
-	cfg = {
-		"sequences": "ignored.fa",
-		"loci": "ignored.bed",
-		"signals": signals,
-		"controls": controls,
-		"chroms": ["chr1"],
-		"in_window": in_window,
-		"out_window": out_window,
-		"model": str(ckpt),
-		"performance_filename": str(perf_path),
-		"device": "cpu",
-		"dtype": "float32",
-		"batch_size": 4,
-		"compile": False,
-		"verbose": False,
-		"reverse_complement_average": False,
-		"exclusion_lists": None,
-		"skip": False,
-	}
-	if negatives is not None:
-		cfg["negatives"] = negatives
-	cfg.update(overrides)
-	json_path = tmp_path / "evaluate.json"
-	json_path.write_text(json.dumps(cfg))
+	cfg = OmegaConf.structured(EvaluateConfig(
+		sequences="ignored.fa",
+		loci="ignored.bed",
+		negatives=negatives,
+		signals=signals,
+		controls=controls,
+		chroms=["chr1"],
+		in_window=in_window,
+		out_window=out_window,
+		model=str(ckpt),
+		performance_filename=str(perf_path),
+		device="cpu",
+		batch_size=4,
+		compile=False,
+		verbose=False,
+		**overrides,
+	))
 
 	from cherimoya_cli.commands import evaluate as evaluate_cmd
 
@@ -110,7 +103,7 @@ def _run_evaluate(tmp_path, ckpt, signals, n_signal_ch, controls=None,
 	with mock.patch("tangermeme.io.extract_loci", side_effect=fake), \
 			mock.patch("tangermeme.io._interleave_loci",
 				side_effect=fake_interleave):
-		evaluate_cmd.run(argparse.Namespace(parameters=str(json_path)))
+		evaluate_cmd.run(cfg)
 
 	lines = perf_path.read_text().splitlines()
 	header = lines[0].split("\t")

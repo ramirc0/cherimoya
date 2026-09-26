@@ -2,7 +2,16 @@
 # Author: Jacob Schreiber <jmschreiber91@gmail.com>
 
 
-def run(args):
+def run(cfg):
+	"""Calculate attributions and save them with the one-hot sequences
+	and the index of the loci kept.
+
+
+	Parameters
+	----------
+	cfg: omegaconf.DictConfig
+		A config typed by `cherimoya_cli.config.AttributeConfig`.
+	"""
 
 	import numpy
 
@@ -15,10 +24,11 @@ def run(args):
 	from cherimoya import LogCountWrapper
 	from cherimoya import ProfileWrapper
 	from cherimoya.deep_lift_shap import attribution_ops
-	from ..defaults import default_attribute_parameters
-	from ..utils import merge_parameters
+	from omegaconf import OmegaConf
 
-	parameters = merge_parameters(args.parameters, default_attribute_parameters)
+	# Plain Python values, for the libraries downstream.
+	parameters = OmegaConf.to_container(cfg, resolve=True,
+		throw_on_missing=True)
 	if parameters["skip"]:
 		return
 

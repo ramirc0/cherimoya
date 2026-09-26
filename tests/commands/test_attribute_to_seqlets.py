@@ -14,17 +14,16 @@ real `seqlets`, and checks the coordinate that comes out. Only the two
 tangermeme calls that need genome files or a model are stubbed.
 """
 
-import argparse
-import json
 from unittest import mock
 
 import numpy
 import pandas
 import pytest
 import torch
+from omegaconf import OmegaConf
 
-from cherimoya_cli.defaults import default_attribute_parameters
-from cherimoya_cli.defaults import default_seqlet_parameters
+from cherimoya_cli.config import AttributeConfig
+from cherimoya_cli.config import SeqletsConfig
 
 
 LOCUS_CHROM = "chr1"
@@ -74,19 +73,14 @@ def _run_attribute(tmp_path, in_window, attr_window):
 		# DeepLIFT attributes the whole window; `attribute` slices it.
 		return torch.ones(X.shape)
 
-	cfg = dict(default_attribute_parameters)
-	cfg.update({
-		"sequences": "g.fa", "loci": str(tmp_path / "loci.bed"),
-		"model": "m.torch", "device": "cpu", "verbose": False,
-		"in_window": in_window, "attr_window": attr_window,
-		"ohe_filename": str(tmp_path / "a.ohe.npz"),
-		"attr_filename": str(tmp_path / "a.attr.npz"),
-		"idx_filename": str(tmp_path / "a.idx.npy"),
-	})
-
-	path = tmp_path / "attribute.json"
-	with open(path, "w") as f:
-		json.dump(cfg, f)
+	cfg = OmegaConf.structured(AttributeConfig(
+		sequences="g.fa", loci=str(tmp_path / "loci.bed"),
+		model="m.torch", device="cpu", verbose=False,
+		in_window=in_window, attr_window=attr_window,
+		ohe_filename=str(tmp_path / "a.ohe.npz"),
+		attr_filename=str(tmp_path / "a.attr.npz"),
+		idx_filename=str(tmp_path / "a.idx.npy"),
+	))
 
 	with mock.patch("cherimoya.Cherimoya") as model_cls, \
 			mock.patch("tangermeme.io.extract_loci",
@@ -97,7 +91,7 @@ def _run_attribute(tmp_path, in_window, attr_window):
 				side_effect=fake_dls):
 		model_cls.load.return_value = mock.MagicMock(n_control_tracks=0,
 			signal_groups=[1])
-		attribute.run(argparse.Namespace(parameters=str(path)))
+		attribute.run(cfg)
 
 	captured["ohe"] = numpy.load(tmp_path / "a.ohe.npz")["arr_0"]
 	captured["attr"] = numpy.load(tmp_path / "a.attr.npz")["arr_0"]
@@ -132,23 +126,18 @@ def _run_seqlets(tmp_path, start, end):
 		"example_idx": [0], "start": [start], "end": [end],
 		"attribution": [1.0], "p-value": [0.0]})
 
-	cfg = dict(default_seqlet_parameters)
-	cfg.update({
-		"loci": str(tmp_path / "loci.bed"), "verbose": False,
-		"chroms": [LOCUS_CHROM],
-		"ohe_filename": str(tmp_path / "a.ohe.npz"),
-		"attr_filename": str(tmp_path / "a.attr.npz"),
-		"idx_filename": str(tmp_path / "a.idx.npy"),
-		"output_filename": str(tmp_path / "seqlets.bed"),
-	})
-
-	path = tmp_path / "seqlets.json"
-	with open(path, "w") as f:
-		json.dump(cfg, f)
+	cfg = OmegaConf.structured(SeqletsConfig(
+		loci=str(tmp_path / "loci.bed"), verbose=False,
+		chroms=[LOCUS_CHROM],
+		ohe_filename=str(tmp_path / "a.ohe.npz"),
+		attr_filename=str(tmp_path / "a.attr.npz"),
+		idx_filename=str(tmp_path / "a.idx.npy"),
+		output_filename=str(tmp_path / "seqlets.bed"),
+	))
 
 	with mock.patch("tangermeme.seqlet.recursive_seqlets",
 			return_value=frame):
-		seqlets.run(argparse.Namespace(parameters=str(path)))
+		seqlets.run(cfg)
 
 	return pandas.read_csv(tmp_path / "seqlets.bed", sep="\t", header=None)
 
