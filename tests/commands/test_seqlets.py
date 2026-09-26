@@ -8,12 +8,13 @@ width. These tests pin that conversion by stubbing
 where it lands on the genome.
 """
 
-import argparse
-import json
 from unittest import mock
 
 import numpy
 import pandas
+from omegaconf import OmegaConf
+
+from cherimoya_cli.config import SeqletsConfig
 
 
 # The window `attribute` extracts, and the centred slice it actually
@@ -67,28 +68,20 @@ def _run_seqlets(tmp_path, seqlet_frame, n_loci=1, width=ATTR_WIDTH):
 	bed, ohe, attr, idx = _write_inputs(tmp_path, n_loci, width)
 	out = tmp_path / "seqlets.bed"
 
-	cfg = {
-		"threshold": 0.01,
-		"min_seqlet_len": 4,
-		"max_seqlet_len": 25,
-		"additional_flanks": 0,
-		"chroms": [LOCUS_CHROM],
-		"exclusion_lists": None,
-		"verbose": False,
-		"loci": str(bed),
-		"ohe_filename": str(ohe),
-		"attr_filename": str(attr),
-		"idx_filename": str(idx),
-		"output_filename": str(out),
-		"skip": False,
-	}
-	cfg_path = tmp_path / "seqlets.json"
-	with open(cfg_path, "w") as f:
-		json.dump(cfg, f)
+	cfg = OmegaConf.structured(SeqletsConfig(
+		additional_flanks=0,
+		chroms=[LOCUS_CHROM],
+		verbose=False,
+		loci=str(bed),
+		ohe_filename=str(ohe),
+		attr_filename=str(attr),
+		idx_filename=str(idx),
+		output_filename=str(out),
+	))
 
 	with mock.patch("tangermeme.seqlet.recursive_seqlets",
 		return_value=seqlet_frame):
-		seqlets.run(argparse.Namespace(parameters=str(cfg_path)))
+		seqlets.run(cfg)
 
 	if out.stat().st_size == 0:
 		return pandas.DataFrame(columns=[0, 1, 2])

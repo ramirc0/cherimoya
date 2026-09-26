@@ -2,7 +2,15 @@
 # Author: Jacob Schreiber <jmschreiber91@gmail.com>
 
 
-def run(args):
+def run(cfg):
+	"""Call seqlets from saved attributions and write them as a BED file.
+
+
+	Parameters
+	----------
+	cfg: omegaconf.DictConfig
+		A config typed by `cherimoya_cli.config.SeqletsConfig`.
+	"""
 
 	import numpy
 	import torch
@@ -11,10 +19,11 @@ def run(args):
 	from tangermeme.seqlet import recursive_seqlets
 	from tangermeme.utils import example_to_fasta_coords
 
-	from ..defaults import default_seqlet_parameters
-	from ..utils import merge_parameters
+	from omegaconf import OmegaConf
 
-	parameters = merge_parameters(args.parameters, default_seqlet_parameters)
+	# Plain Python values, for the libraries downstream.
+	parameters = OmegaConf.to_container(cfg, resolve=True,
+		throw_on_missing=True)
 	if parameters["skip"]:
 		return
 

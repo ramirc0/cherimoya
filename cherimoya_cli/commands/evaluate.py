@@ -2,7 +2,15 @@
 # Author: Jacob Schreiber <jmschreiber91@gmail.com>
 
 
-def run(args):
+def run(cfg):
+	"""Evaluate a trained model and write its performance table.
+
+
+	Parameters
+	----------
+	cfg: omegaconf.DictConfig
+		A config typed by `cherimoya_cli.config.EvaluateConfig`.
+	"""
 
 	import torch
 
@@ -17,10 +25,11 @@ def run(args):
 	from cherimoya.io import channel_permutation_from_groups
 	from cherimoya.io import normalize_signal_groups
 	from cherimoya.performance import calculate_performance_measures
-	from ..defaults import default_evaluate_parameters
-	from ..utils import merge_parameters
+	from omegaconf import OmegaConf
 
-	parameters = merge_parameters(args.parameters, default_evaluate_parameters)
+	# Plain Python values, for the libraries downstream.
+	parameters = OmegaConf.to_container(cfg, resolve=True,
+		throw_on_missing=True)
 	if parameters["skip"]:
 		return
 
@@ -83,9 +92,8 @@ def run(args):
 	)
 
 	# The negatives follow the peaks, which are the first `n_peaks` rows.
-	# The key is optional, so that JSONs written before it still run.
 	n_peaks = len(examples[0])
-	negatives = parameters.get("negatives")
+	negatives = parameters["negatives"]
 	if negatives is not None and len(_interleave_loci(negatives,
 		parameters["chroms"])) > 0:
 		negatives = extract_loci(
@@ -148,7 +156,7 @@ def run(args):
 		y_hat_logcounts = (y_hat_logcounts + y_hat_logcounts_rc) / 2
 
 	# Prefer the model's own grouping over whatever the caller passed
-	# in the JSON — the checkpoint is authoritative about how its count
+	# in the config — the checkpoint is authoritative about how its count
 	# head is laid out.
 	model_signal_groups = getattr(model, "signal_groups", None)
 	if model_signal_groups is None:

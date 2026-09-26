@@ -2,7 +2,15 @@
 # Author: Jacob Schreiber <jmschreiber91@gmail.com>
 
 
-def run(args):
+def run(cfg):
+	"""Write a marginalization report for each motif.
+
+
+	Parameters
+	----------
+	cfg: omegaconf.DictConfig
+		A config typed by `cherimoya_cli.config.MarginalizeConfig`.
+	"""
 
 	import numpy
 
@@ -11,10 +19,11 @@ def run(args):
 
 	from cherimoya import Cherimoya
 	from cherimoya import ControlWrapper
-	from ..defaults import default_marginalize_parameters
-	from ..utils import merge_parameters
+	from omegaconf import OmegaConf
 
-	parameters = merge_parameters(args.parameters, default_marginalize_parameters)
+	# Plain Python values, for the libraries downstream.
+	parameters = OmegaConf.to_container(cfg, resolve=True,
+		throw_on_missing=True)
 	if parameters["skip"]:
 		return
 

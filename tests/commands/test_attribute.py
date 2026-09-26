@@ -6,15 +6,14 @@ other window was fed 2114bp regardless. The attributed slice was a
 hard-coded 400bp with no key at all.
 """
 
-import argparse
-import json
 from unittest import mock
 
 import numpy
 import pytest
 import torch
+from omegaconf import OmegaConf
 
-from cherimoya_cli.defaults import default_attribute_parameters
+from cherimoya_cli.config import AttributeConfig
 
 
 def _run_attribute(tmp_path, n_loci=3, signal_groups=(1, 2), **overrides):
@@ -45,19 +44,14 @@ def _run_attribute(tmp_path, n_loci=3, signal_groups=(1, 2), **overrides):
 		# saves can be located in the full-window output.
 		return torch.arange(X.shape[-1]).float().expand(X.shape).clone()
 
-	cfg = dict(default_attribute_parameters)
-	cfg.update({
+	cfg = OmegaConf.structured(AttributeConfig(**{
 		'sequences': 'f.fa', 'loci': 'f.bed', 'model': 'm.torch',
 		'device': 'cpu', 'verbose': False,
 		'ohe_filename': str(tmp_path / 'a.ohe.npz'),
 		'attr_filename': str(tmp_path / 'a.attr.npz'),
 		'idx_filename': str(tmp_path / 'a.idx.npy'),
-	})
-	cfg.update(overrides)
-
-	path = tmp_path / 'attribute.json'
-	with open(path, 'w') as f:
-		json.dump(cfg, f)
+		**overrides,
+	}))
 
 	with mock.patch('cherimoya.Cherimoya') as model_cls, \
 			mock.patch('tangermeme.io.extract_loci',
@@ -68,11 +62,11 @@ def _run_attribute(tmp_path, n_loci=3, signal_groups=(1, 2), **overrides):
 				side_effect=fake_dls):
 		model_cls.load.return_value = mock.MagicMock(n_control_tracks=0,
 			signal_groups=list(signal_groups))
-		attribute.run(argparse.Namespace(parameters=str(path)))
+		attribute.run(cfg)
 		captured['load'] = model_cls.load.call_args.kwargs
 
-	captured['ohe'] = numpy.load(cfg['ohe_filename'])['arr_0']
-	captured['attr'] = numpy.load(cfg['attr_filename'])['arr_0']
+	captured['ohe'] = numpy.load(cfg.ohe_filename)['arr_0']
+	captured['attr'] = numpy.load(cfg.attr_filename)['arr_0']
 	return captured
 
 

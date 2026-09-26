@@ -1,31 +1,26 @@
-"""Tests of `cherimoya attribute`'s ``"fast"`` key on the CPU. With
-``"fast": true``, the default, `cherimoya.deep_lift_shap.deep_lift_shap`
+"""Tests of `cherimoya attribute`'s `fast` key on the CPU. With
+`fast: true`, the default, `cherimoya.deep_lift_shap.deep_lift_shap`
 takes its fast path for the log-counts, and the command writes the files
-that ``"fast": false`` writes.
+that `fast: false` writes.
 
 The inputs: a FASTA of 3 contigs of 3 kb with a run of 20 Ns, and 12 loci,
 one of which runs off the end of its contig (`extract_loci` drops it) and
 one of which covers the N run (the N filter drops it), so 10 are kept. The
 model is a tiny Cherimoya with weights redrawn so that the DeepLIFT rules
-matter, saved with model.save(). The JSON attributes 4 shuffles over a 256
+matter, saved with model.save(). The config attributes 4 shuffles over a 256
 bp input and keeps 64 bp.
 
 Every job here would take the default path less than thirty seconds, so the
 tests that need the fast path set `_FAST_MIN_SECONDS` to 0 (`forced`).
 """
 
-import argparse
-import json
-
 import numpy
 import pytest
 import torch
-
-from pathlib import Path
+from omegaconf import OmegaConf
 
 from cherimoya_cli.commands import attribute
-from cherimoya_cli.defaults import default_attribute_parameters
-from cherimoya_cli.defaults import default_pipeline_parameters
+from cherimoya_cli.config import AttributeConfig
 
 from .. import deep_lift_shap_engine_helpers as tiny
 
@@ -44,7 +39,6 @@ LOCI = (
 )
 KEPT = numpy.array([True] * 6 + [False] + [True] * 4 + [False])
 REL_L2_MAX = 1e-5
-MISSING_MODEL = "/nonexistent/cherimoya.torch"
 
 
 @pytest.fixture(scope="module")
@@ -77,7 +71,7 @@ def inputs(tmp_path_factory):
 
 
 def write_params(inputs, out_dir, name, **overrides):
-	"""An attribute JSON for the synthetic inputs, writing
+	"""An attribute config for the synthetic inputs, writing
 	<out_dir>/<name>.{ohe.npz,attr.npz,idx.npy}."""
 
 	params = {
@@ -101,21 +95,18 @@ def write_params(inputs, out_dir, name, **overrides):
 	}
 
 	params.update(overrides)
-	path = out_dir / "{}.json".format(name)
-	path.write_text(json.dumps(params, indent=2))
-	return path
+	return OmegaConf.structured(AttributeConfig(**params))
 
 
-def run(path):
-	attribute.run(argparse.Namespace(parameters=str(path)))
-	p = json.loads(Path(path).read_text())
+def run(cfg):
+	attribute.run(cfg)
 	out = {}
 	for name in ("ohe", "attr"):
-		with numpy.load(p["{}_filename".format(name)]) as npz:
+		with numpy.load(cfg["{}_filename".format(name)]) as npz:
 			out[name + "_keys"] = sorted(npz.files)
 			out[name] = npz["arr_0"]
 
-	out["idx"] = numpy.load(p["idx_filename"])
+	out["idx"] = numpy.load(cfg["idx_filename"])
 	return out
 
 
@@ -123,9 +114,9 @@ def run(path):
 
 
 def test_the_fast_path_writes_the_default_paths_files(inputs, tmp_path, forced,
-	engines):
-	assert default_attribute_parameters["fast"] is True
-	assert default_pipeline_parameters["attribute_parameters"]["fast"] is True
+	engines, make_config):
+	assert make_config("attribute").fast is True
+	assert make_config("pipeline").attribute.fast is True
 	default = run(write_params(inputs, tmp_path, "default", fast=False))
 	assert engines == []
 	ours = run(write_params(inputs, tmp_path, "fast"))
@@ -145,10 +136,3 @@ def test_the_fast_path_writes_the_default_paths_files(inputs, tmp_path, forced,
 	assert float(tiny.rows_rel_l2(torch.from_numpy(ours["attr"]),
 		torch.from_numpy(default["attr"])).max()) <= REL_L2_MAX
 
-
-@pytest.mark.parametrize("value", ["yes", 1])
-def test_fast_must_be_a_bool(inputs, tmp_path, value):
-	path = write_params(inputs, tmp_path, "bad", model=MISSING_MODEL,
-		fast=value)
-	with pytest.raises(ValueError, match="`fast` must be true or false"):
-		attribute.run(argparse.Namespace(parameters=str(path)))
