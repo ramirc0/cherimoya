@@ -48,11 +48,14 @@ claude_comments/
 build.log
 
 # Pipeline outputs and temporary parameter files
-*.pipeline.json
-*.fit.json
-*.evaluate.json
-*.attribute.json
-*.marginalize.json
+*.negatives.yaml
+*.fit.yaml
+*.evaluate.yaml
+*.attribute.yaml
+*.seqlets.yaml
+*.marginalize.yaml
+.hydra/
+multirun/
 *.ohe.npz
 *.attr.npz
 *.idx.npy
