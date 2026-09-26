@@ -32,26 +32,32 @@ Computing attributions (CLI)
 
 .. code-block:: bash
 
-   cherimoya attribute -p attribute_params.json
+   cherimoya attribute -p attribute.yaml
 
-Example JSON:
+Example ``attribute.yaml``:
 
-.. code-block:: json
+.. code-block:: yaml
 
-   {
-       "model": "my_model.torch",
-       "sequences": "hg38.fa",
-       "loci": "peaks.narrowPeak",
-       "chroms": ["chr2", "chr4", "chr5"],
-       "algorithm": "deep_lift_shap",
-       "output": "counts",
-       "group": 0,
-       "batch_size": 64,
-       "device": "cuda",
-       "ohe_filename": "attributions.ohe.npz",
-       "attr_filename": "attributions.attr.npz",
-       "idx_filename": "attributions.idx.npy"
-   }
+   model: my_model.torch
+   sequences: hg38.fa
+   loci: [peaks.narrowPeak]
+   chroms: [chr2, chr4, chr5]
+   algorithm: deep_lift_shap
+   output: counts
+   group: 0
+   batch_size: 64
+   device: cuda
+   ohe_filename: attributions.ohe.npz
+   attr_filename: attributions.attr.npz
+   idx_filename: attributions.idx.npy
+
+Only ``model``, ``sequences`` and ``loci`` are required; the rest are
+shown at their defaults except ``chroms``. The same run without a file:
+
+.. code-block:: bash
+
+   cherimoya attribute model=my_model.torch sequences=hg38.fa \
+       'loci=[peaks.narrowPeak]' 'chroms=[chr2,chr4,chr5]'
 
 ``output`` controls what is being attributed to:
 
@@ -73,7 +79,7 @@ default, ``0``, is the whole output.
 * ``"saturation_mutagenesis"`` — ``tangermeme.saturation_mutagenesis``,
   forward passes only, three per attributed position.
 
-The model is loaded uncompiled by default. ``"compile": true`` compiles
+The model is loaded uncompiled by default. ``compile=true`` compiles
 it for saturation mutagenesis only; DeepLIFT/SHAP never compiles, since
 its backward hooks cause graph breaks and recompiles. Neither algorithm ran
 faster compiled in our measurements, and compiling lengthened the first
@@ -201,7 +207,18 @@ calling on the (attribution × one-hot) signal.
 
 .. code-block:: bash
 
-   cherimoya seqlets -p seqlet_params.json
+   cherimoya seqlets -p my_experiment.seqlets.yaml
+
+``my_experiment.seqlets.yaml`` is the file ``cherimoya pipeline``
+saves. On its own, ``seqlets`` needs ``loci`` and the three files
+``attribute`` wrote:
+
+.. code-block:: bash
+
+   cherimoya seqlets 'loci=[peaks.narrowPeak]' \
+       ohe_filename=attributions.ohe.npz \
+       attr_filename=attributions.attr.npz \
+       idx_filename=attributions.idx.npy
 
 **Python:**
 
@@ -228,7 +245,7 @@ example-relative coordinates to genome coordinates using
 tomtom-lite annotation
 ----------------------
 
-When the pipeline JSON provides a ``motifs`` MEME file, the
+When the pipeline config sets ``motifs`` to a MEME file, the
 ``pipeline`` subcommand additionally invokes ``ttl`` (tomtom-lite) on
 the seqlet BED to annotate each seqlet with its closest match against
 the motif database. This is what produces
@@ -263,7 +280,7 @@ this automatically; run it manually like so:
        -s ./
 
 The pipeline's TF-MoDISco step uses 100,000 seqlets by default
-(``modisco_motifs_parameters.n_seqlets``).
+(``modisco_motifs.n_seqlets``).
 
 
 Motif marginalization
@@ -274,11 +291,13 @@ profile and counts:
 
 .. code-block:: bash
 
-   cherimoya marginalize -p marginalize_params.json
+   cherimoya marginalize model=my_model.torch sequences=hg38.fa \
+       motifs=JASPAR_2024.meme 'loci=[backgrounds.bed]'
 
 The output directory contains per-motif plots and a summary report
 showing how predictions change when each motif is inserted at the
-center of negative (non-peak) backgrounds.
+center of the ``loci`` backgrounds. The pipeline's marginalization
+step uses the peaks as backgrounds.
 
 .. note::
 

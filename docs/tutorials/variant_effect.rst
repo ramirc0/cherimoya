@@ -12,7 +12,7 @@ Saturation mutagenesis (CLI)
 ----------------------------
 
 The simplest *exhaustive* variant scan is the ``attribute`` subcommand
-with ``"algorithm": "saturation_mutagenesis"``, which performs in-silico
+with ``algorithm=saturation_mutagenesis``, which performs in-silico
 saturation mutagenesis over the central 400 bp of each input sequence —
 every possible single-nucleotide substitution, scored by its effect on
 the predicted log counts (or profile). The subcommand's default
@@ -20,25 +20,23 @@ algorithm is DeepLIFT/SHAP, so the key has to be set:
 
 .. code-block:: bash
 
-   cherimoya attribute -p attribute_params.json
+   cherimoya attribute -p attribute.yaml
 
-Example JSON:
+Example ``attribute.yaml``:
 
-.. code-block:: json
+.. code-block:: yaml
 
-   {
-       "model": "my_model.torch",
-       "sequences": "hg38.fa",
-       "loci": "peaks.narrowPeak",
-       "chroms": ["chr2", "chr4", "chr5"],
-       "algorithm": "saturation_mutagenesis",
-       "output": "counts",
-       "batch_size": 512,
-       "device": "cuda",
-       "ohe_filename": "attributions.ohe.npz",
-       "attr_filename": "attributions.attr.npz",
-       "idx_filename": "attributions.idx.npy"
-   }
+   model: my_model.torch
+   sequences: hg38.fa
+   loci: [peaks.narrowPeak]
+   chroms: [chr2, chr4, chr5]
+   algorithm: saturation_mutagenesis
+   output: counts
+   batch_size: 512
+   device: cuda
+   ohe_filename: attributions.ohe.npz
+   attr_filename: attributions.attr.npz
+   idx_filename: attributions.idx.npy
 
 ``output`` can be ``"counts"`` (recommended for most analyses) or
 ``"profile"``. The output array has shape ``(n_examples, 4, 400)`` and
@@ -131,15 +129,16 @@ Motif marginalization (CLI)
 ---------------------------
 
 To quantify the average causal effect of *inserting* a known motif
-into negative backgrounds, use the ``marginalize`` subcommand. This
-inserts each motif from a MEME file at the center of negative loci
-and reports the predicted change in profile and counts:
+into background sequences, use the ``marginalize`` subcommand. This
+inserts each motif from a MEME file at the center of each ``loci``
+background and reports the predicted change in profile and counts:
 
 .. code-block:: bash
 
-   cherimoya marginalize -p marginalize_params.json
+   cherimoya marginalize model=my_model.torch sequences=hg38.fa \
+       motifs=JASPAR_2024.meme 'loci=[negatives.bed]'
 
 Output goes into a report directory containing per-motif CSVs and an
 HTML summary. The marginalize step is run automatically at the end of
-``cherimoya pipeline`` when a motif database is provided to
-``pipeline-json``.
+``cherimoya pipeline`` when the pipeline's ``motifs`` key is set. That
+step uses the peaks as backgrounds.

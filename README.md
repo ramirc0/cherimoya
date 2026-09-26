@@ -78,45 +78,45 @@ On the default model at fp32, the three paths agree on the profile logits to wit
 
 <img src="https://raw.githubusercontent.com/jmschrei/cherimoya/main/imgs/multi-gpu-speedup.png" width=60%>
 
-Training runs on PyTorch Lightning, so setting `devices` in the fit JSON (or passing `devices=` to `cherimoya.training.fit`) trains on several GPUs with DDP. `batch_size` stays the global batch, split evenly across the GPUs, so every step sees the same examples as on one GPU. The figure shows the training speedup at the default global batch of 64 on H200 GPUs, for one ATAC-seq experiment (2,322 steps per epoch). Larger models scale further, because each GPU's share of the batch is more work: the 512-filter model reaches 3.1–3.3× on 4 GPUs and the 12-layer model with a 9,282 bp input window 4.0–4.6× on 8, while the default model gains at most 2.4×. Giving each GPU 64 examples instead scales 7.0–7.7× on 8 GPUs, at the cost of a larger global batch that changes the training. See [training on several devices](https://cherimoya.readthedocs.io/en/latest/cli.html#training-on-several-devices) for how to set it up.
+Training runs on PyTorch Lightning, so setting `devices` in the fit config (or passing `devices=` to `cherimoya.training.fit`) trains on several GPUs with DDP. `batch_size` stays the global batch, split evenly across the GPUs, so every step sees the same examples as on one GPU. The figure shows the training speedup at the default global batch of 64 on H200 GPUs, for one ATAC-seq experiment (2,322 steps per epoch). Larger models scale further, because each GPU's share of the batch is more work: the 512-filter model reaches 3.1–3.3× on 4 GPUs and the 12-layer model with a 9,282 bp input window 4.0–4.6× on 8, while the default model gains at most 2.4×. Giving each GPU 64 examples instead scales 7.0–7.7× on 8 GPUs, at the cost of a larger global batch that changes the training. See [training on several devices](https://cherimoya.readthedocs.io/en/latest/cli.html#training-on-several-devices) for how to set it up.
 
 ### End-to-end CLI pipeline
 
 <img src="https://raw.githubusercontent.com/jmschrei/cherimoya/main/imgs/pipeline.png" width=70%>
 
-The CLI strings the full pipeline — peak calling, signal extraction, training, attribution, seqlet calling, motif discovery — into a single reproducible run. Each step is parameterized through a JSON file, which serves both as a runtime config and a permanent record of what was run. The user-supplied JSON is merged with sensible defaults, so practical configs are short.
+The CLI strings the full pipeline (peak calling, signal extraction, training, attribution, seqlet calling, motif discovery) into a single reproducible run. It is configured with [Hydra](https://hydra.cc): every key has a typed default, so you only give the keys that differ, as `key=value` overrides or in a YAML file.
 
-**Step 1: generate a pipeline JSON from raw data pointers.** Provide a reference genome, one or more signal files, optional controls, a BED of positive loci, and a motif database. For stranded ChIP-seq with input controls (full recipe [here](https://cherimoya.readthedocs.io/en/latest/recipes/chipseq_tf.html)):
+Provide a reference genome, one or more signal files, optional controls, a BED of positive loci, and a motif database. Set `loci` or `negatives` to `null` to have the pipeline call peaks or sample GC-matched negatives. For stranded ChIP-seq with input controls (full recipe [here](https://cherimoya.readthedocs.io/en/latest/recipes/chipseq_tf.html)):
 
 ```bash
-cherimoya pipeline-json \
-    -s hg38.fa -p peaks.narrowPeak \
-    -i chipseq_rep1.bam -i chipseq_rep2.bam \
-    -c input_rep1.bam -c input_rep2.bam \
-    -m JASPAR_2024.meme -n my_experiment -o pipeline.json
+cherimoya pipeline name=my_experiment sequences=hg38.fa \
+    'loci=[peaks.narrowPeak]' negatives=null \
+    'signals=[chipseq_rep1.bam,chipseq_rep2.bam]' \
+    'controls=[input_rep1.bam,input_rep2.bam]' \
+    motifs=JASPAR_2024.meme
 ```
 
-Note: `-i` is the ChIP signal (IP reads) and `-c` is the unenriched-DNA input control (optional).
+`signals` is the ChIP signal (IP reads) and `controls` is the unenriched-DNA input control (optional). Quote the lists so the shell leaves the brackets alone.
 
 For unstranded paired-end ATAC-seq with the standard +4/−4 fragment shift (full recipe [here](https://cherimoya.readthedocs.io/en/latest/recipes/atacseq.html)):
 
 ```bash
-cherimoya pipeline-json \
-    -s hg38.fa -p peaks.narrowPeak \
-    -i fragments.bam -m JASPAR_2024.meme \
-    -n atac_experiment -o pipeline.json \
-    -ps 4 -ns -4 -u -pe
+cherimoya pipeline name=atac_experiment sequences=hg38.fa \
+    'loci=[peaks.narrowPeak]' negatives=null \
+    'signals=[fragments.bam]' motifs=JASPAR_2024.meme \
+    preprocessing.pos_shift=4 preprocessing.neg_shift=-4 \
+    preprocessing.unstranded=true preprocessing.paired_end=true
 ```
 
 Any input path can be remote (S3, HTTPS, etc.); the pipeline streams reads through `bam2bw` directly.
 
-**Step 2: edit the JSON if you want to override defaults** — model width, training/validation chromosomes, seqlet p-value threshold, MoDISco settings, anything. Then run:
+To keep the config in a file, add `--cfg job > pipeline.yaml` to either command. That prints every key with its default and runs nothing. Edit the file to change model width, training/validation chromosomes, seqlet p-value threshold, MoDISco settings or anything else, then run:
 
 ```bash
-cherimoya pipeline -p pipeline.json
+cherimoya pipeline -p pipeline.yaml
 ```
 
-This calls peaks with MACS3 (unless `-p` gave peaks, as above), samples GC-matched negatives, trains a Cherimoya model, computes attributions with DeepLIFT/SHAP, calls seqlets, annotates them with tomtom-lite, and runs TF-MoDISco. The outputs land in the working directory: a `.torch` model checkpoint and training log, per-track bigWigs, a DeepLIFT/SHAP attribution array (`.npz`), a seqlet table with tomtom-lite annotations, and a TF-MoDISco results H5. Each sub-step writes its own JSON snapshot so individual stages can be re-run in isolation with the `fit`, `evaluate`, `attribute`, `marginalize`, or `seqlets` subcommands; the `negatives` subcommand takes flags instead. See [the CLI reference](https://cherimoya.readthedocs.io/en/latest/cli.html) for the full command list and JSON schema.
+This calls peaks with MACS3 (unless `loci` gave peaks, as above), samples GC-matched negatives, trains a Cherimoya model, computes attributions with DeepLIFT/SHAP, calls seqlets, annotates them with tomtom-lite, and runs TF-MoDISco. The outputs land in the working directory: a `.torch` model checkpoint and training log, per-track bigWigs, a DeepLIFT/SHAP attribution array (`.npz`), a seqlet table with tomtom-lite annotations, and a TF-MoDISco results H5. Each step saves its config as `<name>.<command>.yaml`, so a stage can be rerun alone, e.g. `cherimoya fit -p my_experiment.fit.yaml`. Add `-m` to sweep a key and train one model per value: `cherimoya fit -p my_experiment.fit.yaml -m random_state=0,1,2`. Configs in the JSON format of earlier versions no longer load. See [the CLI reference](https://cherimoya.readthedocs.io/en/latest/cli.html) for every command and key.
 
 ### Python API and saving/loading
 

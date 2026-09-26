@@ -48,12 +48,13 @@ The default training batch size (64) and input window (2114 bp) fit
 comfortably on a 16 GB GPU at the default 9-layer, 128-filter model.
 If you hit OOM, the fastest fixes:
 
-* Reduce ``fit_parameters.batch_size`` from 64 to 32 (or 16).
-* Use bf16 autocast: set ``fit_parameters.dtype`` to ``"bfloat16"``.
-* Shrink the model: ``fit_parameters.n_filters`` from 128 to 64 or 48.
-* Train on several GPUs: ``fit_parameters.batch_size`` is the global
-  batch, so with ``fit_parameters.devices`` set to 2 each GPU holds
-  half of it.
+* Reduce ``batch_size`` from 64 to 32 (or 16): ``batch_size=32`` for
+  ``cherimoya fit``, ``fit.batch_size=32`` for ``cherimoya pipeline``.
+* Use bf16 autocast: ``dtype=bfloat16``.
+* Shrink the model: ``n_filters`` from 128 to 64 or 48
+  (``fit.n_filters=64`` in a pipeline).
+* Train on several GPUs: ``batch_size`` is the global batch, so with
+  ``devices=2`` each GPU holds half of it.
 
 GPU memory at training time is dominated by activations
 (``batch_size × in_window × n_filters × n_layers`` plus the
@@ -103,7 +104,8 @@ with its activations kept. On the default 9-layer, 128-filter model at
 2114 bp, 16 pairs peaked at 4.0 GB, 32 at 7.8 GB, 64 (the default) at
 15.5 GB and 512 at 124 GB, with about the same wall time at each, so
 memory grows with ``batch_size``. Lower
-``attribute_parameters.batch_size`` (64 → 32 → 16). With a fixed
+``batch_size`` (64 → 32 → 16), or ``attribute.batch_size`` in a
+pipeline. With a fixed
 ``random_state`` the attributions are the same at any batch size, up
 to float rounding.
 
@@ -160,14 +162,14 @@ The most common causes, in order:
    grouping you intend.
 
    Also confirm that a stranded ``(+, -)`` pair is wrapped as a single
-   inner list — e.g. ``signals=[["plus.bw", "minus.bw"]]`` — rather
+   inner list, e.g. ``'signals=[[plus.bw,minus.bw]]'``, rather
    than passed flat. A flat two-element list is now interpreted as
    two *independent* unstranded tracks, which silently disables the
    ``(+, -)`` swap during reverse-complement augmentation.
 2. **bf16 overflow in the count head**. If you use ``dtype="bfloat16"``
    and the per-locus counts are very large, the log-counts loss can
    overflow. Fall back to ``"float32"`` to confirm; if that fixes it,
-   scale your signal down (``preprocessing_parameters.scale_factor``
+   scale your signal down (``preprocessing.scale_factor``
    when generating bigWigs).
 
 
@@ -214,18 +216,20 @@ Things to check, in order:
    that converges, the issue is upstream of Cherimoya.
 4. **You silently dropped controls.** If your trained-with-controls
    model is being evaluated without ``X_ctl``, the count head sees
-   garbage and Pearson collapses. The evaluation step JSON must list
-   the same ``controls`` as the fit step.
+   garbage and Pearson collapses. The evaluate config must list
+   the same ``controls`` as the fit config.
 
 
-Pipeline cannot find a file
----------------------------
+A command cannot find a file
+----------------------------
 
-Symptom: ``FileNotFoundError: Pipeline cannot start; the following
-inputs are missing: ...`` from ``cherimoya pipeline``.
+Symptom: ``FileNotFoundError: The following inputs are missing: ...``
+from any ``cherimoya`` command.
 
-The pre-flight check inside ``pipeline`` validates that every local
-input path exists before any expensive work starts. Remote paths
+Before a command runs, it checks that every local input path exists
+and lists all the missing ones. Relative paths resolve against the
+directory the command was started from, even inside a ``-m`` sweep
+job. Remote paths
 (``http://``, ``https://``, ``s3://``, ``gs://``) are skipped because
 resolving them requires network access. If a path looks remote but
 isn't (e.g. a relative URL fragment), the check won't catch it.
@@ -234,6 +238,23 @@ If the missing path is a file the pipeline is *supposed* to generate
 later in the run (e.g. you specified ``loci`` pointing at the not-yet
 called peak file), set the offending key to ``null`` instead and let
 the pipeline produce it.
+
+The check runs even with ``skip=true``, so a skipped command still
+needs its inputs to exist.
+
+
+A key is missing or unknown
+---------------------------
+
+Symptom: ``Must provide a value for: ...`` or ``Key '...' not in
+'...Config'``.
+
+The first lists every required key you did not give; give each one, or
+set it to ``null`` in a pipeline if an earlier step produces it. The
+second means a key in the ``-p`` file or an override is misspelled or
+belongs to another command. ``cherimoya <command> --help`` lists the
+valid keys. JSON configs from earlier versions do not load; see
+:doc:`cli`.
 
 
 MACS3 hangs or returns no peaks
@@ -249,7 +270,7 @@ the resulting ``*_peaks.narrowPeak`` is empty.
   emerge; if so, your library is just shallow.
 * If the file format auto-detection picked wrong (e.g. ``BAM`` when
   it should have been ``BAMPE``), set
-  ``preprocessing_parameters.callpeaks_format`` explicitly.
+  ``preprocessing.callpeaks_format`` explicitly.
 
 
 bam2bw says "couldn't open" a remote URL
@@ -315,14 +336,16 @@ sidesteps the entire class of compile/cudagraph foot-guns at the
 cost of that speedup.
 
 From the CLI the same two settings are the ``compile`` and
-``compile_mode`` JSON keys, accepted by ``evaluate``, ``attribute``,
-``marginalize`` and at the top level of a ``pipeline`` JSON, where one
-value reaches every step that loads a model — except ``attribute``,
-which defaults to ``compile: false`` and never compiles under
-DeepLIFT/SHAP::
+``compile_mode`` keys, accepted by ``fit`` (for training and its
+evaluations), ``evaluate``, ``attribute`` and ``marginalize``::
 
-    {"compile": false}
-    {"compile_mode": "max-autotune-no-cudagraphs"}
+    cherimoya evaluate -p run.test.evaluate.yaml compile=false
+    cherimoya evaluate -p run.test.evaluate.yaml compile_mode=max-autotune-no-cudagraphs
+
+``attribute`` defaults to ``compile=false`` and never compiles under
+DeepLIFT/SHAP. At the top level of a ``pipeline`` config,
+``compile`` reaches fit and marginalize, and ``compile_mode`` reaches
+fit, attribute and marginalize.
 
 .. note::
 

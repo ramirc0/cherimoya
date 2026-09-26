@@ -22,13 +22,13 @@ Repository layout
    │   ├── wrappers.py             # Control / profile / count output wrappers
    │   └── performance.py          # Evaluation metrics
    ├── cherimoya_cli/              # The CLI entry-point package
-   │   ├── __main__.py             # Argparse driver and subcommand registry
-   │   ├── defaults.py             # All default JSON parameter dicts
-   │   ├── utils.py                # JSON merging and parameter helpers
+   │   ├── __main__.py             # Dispatches each subcommand to Hydra
+   │   ├── config.py               # Config schemas: every CLI default
+   │   ├── utils.py                # Input path checks
+   │   ├── conf/                   # Packaged Hydra configs, one per subcommand
    │   ├── skills/                 # The bundled Claude Code agent skill
    │   └── commands/               # One file per subcommand
    │       ├── pipeline.py
-   │       ├── pipeline_json.py
    │       ├── fit.py
    │       ├── evaluate.py
    │       ├── attribute.py
@@ -182,23 +182,34 @@ the ``cherimoya`` CLI:
    * - ``tests/test_wrappers.py``
      - The output wrappers on their own and composed over
        ``ControlWrapper``.
+   * - ``tests/test_config.py``
+     - The config schemas: required keys, ``null`` for a key the
+       pipeline produces, typo and type rejection, and how the
+       pipeline's step sections link to its top-level keys.
    * - ``tests/test_utils.py``
-     - JSON merge and default-handling helpers.
+     - ``resolve_inputs``: relative paths made absolute, every missing
+       path listed, remote paths skipped.
+   * - ``tests/commands/test_main.py``
+     - The dispatcher: ``-p`` plus overrides, errors for typos and
+       missing keys, ``--cfg job`` templates, multirun job
+       directories, and ``install-skill``.
    * - ``tests/commands/test_fit.py``
      - The fit step's wiring: the settings, accelerator and schedule
        lengths it passes to :func:`cherimoya.training.fit`, seed
        handling across ranks, parameter routing to the three
        optimizers, and the fit defaults.
    * - ``tests/commands/test_pipeline.py``
-     - Which keys a hand-written pipeline JSON may leave out.
+     - Which keys a pipeline config may leave out, and the saved
+       ``<name>.fit.yaml`` recording a drawn seed.
    * - ``tests/commands/test_pipeline_dry_run.py``
-     - ``dry_run`` emitting the per-step JSONs and nothing else.
+     - ``dry_run`` writing the per-step YAML files and nothing else.
    * - ``tests/commands/test_step_skipping.py``
      - ``skip`` and the marginalization guard returning rather than
        ending the interpreter.
    * - ``tests/commands/test_config_keys.py``
-     - Every key the pipeline declares for a step is one that step's
-       subcommand reads.
+     - Every pipeline step section is typed by that subcommand's
+       schema, and every schema key is read, apart from a pinned list
+       of known exceptions.
    * - ``tests/commands/test_compile_knob.py``
      - The ``compile`` keys reaching ``Cherimoya.load`` from each
        subcommand that loads a model.
@@ -211,9 +222,10 @@ the ``cherimoya`` CLI:
        ``test_install_skill.py``
      - The remaining subcommands, one file each.
 
-Fixtures shared across the CLI tests — a pipeline JSON naming real
-input files, and a runner for it — live in
-``tests/commands/conftest.py``.
+Fixtures shared across the CLI tests, a pipeline config naming real
+input files and a runner for it, live in
+``tests/commands/conftest.py``. ``make_config`` in ``tests/conftest.py``
+composes any subcommand's config with overrides.
 
 Markers:
 

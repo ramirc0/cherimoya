@@ -124,52 +124,47 @@ Python:
    # y_profile.shape == (N, 1, 1000)
    # y_counts.shape  == (N, 1)
 
-Fit JSON (processed bigWigs already on disk). ``signals`` is a flat
-list of one string — that's exactly what the default
+Fit config (processed bigWigs already on disk). ``signals`` is a flat
+list of one file, which is exactly what the default
 ``signal_groups=[1]`` expects:
 
-.. code-block:: json
+.. code-block:: yaml
 
-   {
-     "name": "atac_k562",
-     "sequences": "hg38.fa",
-     "loci": "k562_atac_peaks.narrowPeak",
-     "negatives": "k562_atac_negatives.bed",
-     "signals": ["k562_atac.bw"],
-     "controls": null
-   }
+   name: atac_k562
+   sequences: hg38.fa
+   loci: [k562_atac_peaks.narrowPeak]
+   negatives: [k562_atac_negatives.bed]
+   signals: [k562_atac.bw]
+   controls: null
 
 Run as:
 
 .. code-block:: bash
 
-   cherimoya fit -p atac_k562.fit.json
+   cherimoya fit -p atac_k562.fit.yaml
 
-Pipeline JSON (you have BAMs and want Cherimoya to call peaks,
+Pipeline config (you have BAMs and want Cherimoya to call peaks,
 convert to bigWig, sample negatives, and train in one command).
-``preprocessing_parameters.unstranded`` is ``true`` so ``bam2bw``
+``preprocessing.unstranded`` is ``true`` so ``bam2bw``
 emits a single ``.bw`` file:
 
-.. code-block:: json
+.. code-block:: yaml
 
-   {
-     "name": "atac_k562",
-     "sequences": "hg38.fa",
-     "loci": null,
-     "negatives": null,
-     "signals": ["k562_atac.bam"],
-     "controls": null,
-     "preprocessing_parameters": {
-       "unstranded": true,
-       "fragments": true,
-       "paired_end": true,
-       "pos_shift": 4,
-       "neg_shift": -4
-     }
-   }
+   name: atac_k562
+   sequences: hg38.fa
+   loci: null
+   negatives: null
+   signals: [k562_atac.bam]
+   controls: null
+   preprocessing:
+     unstranded: true
+     fragments: true
+     paired_end: true
+     pos_shift: 4
+     neg_shift: -4
 
 After preprocessing, the pipeline rewrites ``signals`` to
-``["atac_k562.bw"]`` and hands the JSON off to the fit step.
+``[atac_k562.bw]`` before the fit step reads it.
 
 
 Mode 2 — Stranded single-experiment
@@ -215,46 +210,42 @@ Python:
    # y_profile.shape == (N, 2, 1000)
    # y_counts.shape  == (N, 1)
 
-Fit JSON (processed bigWigs). The stranded pair is **one group of
-two files** — wrap it in an inner list so the data loader knows
+Fit config (processed bigWigs). The stranded pair is **one group of
+two files**. Wrap it in an inner list so the data loader knows
 those two files are strand-paired (and need to swap channels
 together under RC):
 
-.. code-block:: json
+.. code-block:: yaml
 
-   {
-     "name": "ctcf_k562",
-     "sequences": "hg38.fa",
-     "loci": "ctcf_k562_peaks.narrowPeak",
-     "negatives": "ctcf_k562_negatives.bed",
-     "signals": [["ctcf_k562.+.bw", "ctcf_k562.-.bw"]],
-     "controls": [["input_k562.+.bw", "input_k562.-.bw"]]
-   }
+   name: ctcf_k562
+   sequences: hg38.fa
+   loci: [ctcf_k562_peaks.narrowPeak]
+   negatives: [ctcf_k562_negatives.bed]
+   signals: [[ctcf_k562.+.bw, ctcf_k562.-.bw]]
+   controls: [[input_k562.+.bw, input_k562.-.bw]]
+
+On the command line the same value is
+``'signals=[[ctcf_k562.+.bw,ctcf_k562.-.bw]]'``.
 
 Note the **double brackets** around each list of bigWigs. A bare flat
-list ``["ctcf.+.bw", "ctcf.-.bw"]`` would be interpreted as two
+list ``[ctcf.+.bw, ctcf.-.bw]`` would be interpreted as two
 *independent* unstranded tracks (``signal_groups=[1, 1]``), which is
 not what you want for a stranded experiment — the ``+`` / ``-``
 swap on RC depends on knowing the two files are paired.
 
-Pipeline JSON (BAMs). ``preprocessing_parameters.unstranded`` is
-``false``, so ``bam2bw`` emits the ``+`` / ``-`` pair and the
-pipeline rewrites ``signals`` to the nested form above before
+Pipeline config (BAMs). ``preprocessing.unstranded`` is
+``false`` by default, so ``bam2bw`` emits the ``+`` / ``-`` pair and
+the pipeline rewrites ``signals`` to the nested form above before
 calling fit:
 
-.. code-block:: json
+.. code-block:: yaml
 
-   {
-     "name": "ctcf_k562",
-     "sequences": "hg38.fa",
-     "loci": null,
-     "negatives": null,
-     "signals": ["ctcf_k562.bam"],
-     "controls": ["input_k562.bam"],
-     "preprocessing_parameters": {
-       "unstranded": false
-     }
-   }
+   name: ctcf_k562
+   sequences: hg38.fa
+   loci: null
+   negatives: null
+   signals: [ctcf_k562.bam]
+   controls: [input_k562.bam]
 
 
 Mode 3 — Variably-multitask
@@ -318,24 +309,21 @@ Python:
    # y_profile.shape == (N, 5, 1000)
    # y_counts.shape  == (N, 3)
 
-Fit JSON (processed bigWigs). Each top-level entry of ``signals`` is
+Fit config (processed bigWigs). Each top-level entry of ``signals`` is
 one group; a string is shorthand for a one-channel unstranded group,
 and a nested list is a multi-channel group. Mix freely:
 
-.. code-block:: json
+.. code-block:: yaml
 
-   {
-     "name": "atac_ctcf_yy1_k562",
-     "sequences": "hg38.fa",
-     "loci": "joint_peaks.narrowPeak",
-     "negatives": "joint_negatives.bed",
-     "signals": [
-       "k562_atac.bw",
-       ["ctcf_k562.+.bw", "ctcf_k562.-.bw"],
-       ["yy1_k562.+.bw", "yy1_k562.-.bw"]
-     ],
-     "controls": null
-   }
+   name: atac_ctcf_yy1_k562
+   sequences: hg38.fa
+   loci: [joint_peaks.narrowPeak]
+   negatives: [joint_negatives.bed]
+   signals:
+     - k562_atac.bw
+     - [ctcf_k562.+.bw, ctcf_k562.-.bw]
+     - [yy1_k562.+.bw, yy1_k562.-.bw]
+   controls: null
 
 The order of entries in ``signals`` defines the order of the model's
 output channels: in this example channel 0 is ATAC, channels 1–2 are
@@ -373,7 +361,7 @@ default is ``0``.
    For a variably-multitask model with BAM inputs, run
    ``cherimoya pipeline`` separately for each modality (each one
    uses Mode 1 or Mode 2 above) to produce per-modality bigWigs and
-   peak BEDs, then write the multi-group fit JSON shown above and
+   peak BEDs, then write the multi-group fit config shown above and
    call ``cherimoya fit`` directly. The pipeline command does
    not need to be involved in the joint step.
 

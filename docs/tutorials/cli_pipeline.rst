@@ -13,8 +13,7 @@ marginalization in a single reproducible run.
 
 |
 
-For a complete list of every CLI flag, every JSON key, and every
-default value, see :doc:`../cli`. For assay-specific recipes
+For every config key and its default, see :doc:`../cli`. For assay-specific recipes
 (TF ChIP-seq, ATAC-seq, DNase-seq) see the recipe pages.
 
 
@@ -42,87 +41,101 @@ checks paths that look local.
 Subcommands at a glance
 -----------------------
 
-The two commands you actually run, in the order you run them:
-
-* ``cherimoya pipeline-json`` — emit a fully-populated JSON config
-  from a handful of CLI pointers.
-* ``cherimoya pipeline`` — run the full end-to-end pipeline from
-  that JSON.
-
-Every other subcommand (``fit``, ``evaluate``, ``attribute``,
-``seqlets``, ``marginalize``, ``negatives``) corresponds
-to an individual pipeline stage and can be run on its own. All but
-``negatives``, which takes flags, are driven by their own JSON, which
-the pipeline writes alongside its outputs. See :doc:`../cli` for the full subcommand reference.
+``cherimoya pipeline`` runs the whole thing. Every other subcommand
+(``fit``, ``evaluate``, ``attribute``, ``seqlets``, ``marginalize``,
+``negatives``) is one pipeline stage and can be run on its own. The
+pipeline writes a config file for each stage it runs, so any stage can
+be rerun alone. See :doc:`../cli` for the full reference.
 
 
-Two-step workflow
+Configuring a run
 -----------------
 
-The expected workflow is two steps: generate a JSON, then run it.
-
-Step 1: generate a pipeline JSON
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Each command reads its config from an optional YAML file (``-p``) and
+``key=value`` overrides on the command line; anything not given takes
+its default. The pipeline needs five keys: ``name``, ``sequences``,
+``loci``, ``negatives`` and ``signals``. Set ``loci`` or
+``negatives`` to ``null`` to have the pipeline produce them.
 
 For stranded ChIP-seq with input controls:
 
 .. code-block:: bash
 
-   cherimoya pipeline-json \
-       -s hg38.fa -p peaks.narrowPeak \
-       -i input1.bam -i input2.bam \
-       -c control1.bam -c control2.bam \
-       -m JASPAR_2024.meme -n my_experiment -o pipeline.json
+   cherimoya pipeline name=my_experiment sequences=hg38.fa \
+       'loci=[peaks.narrowPeak]' negatives=null \
+       'signals=[input1.bam,input2.bam]' \
+       'controls=[control1.bam,control2.bam]' \
+       motifs=JASPAR_2024.meme
 
 For unstranded paired-end ATAC-seq with the standard +4 / -4 fragment
 shift:
 
 .. code-block:: bash
 
-   cherimoya pipeline-json \
-       -s hg38.fa -p peaks.narrowPeak \
-       -i fragments.bam -m JASPAR_2024.meme \
-       -n atac_experiment -o pipeline.json \
-       -ps 4 -ns -4 -u -f -pe
+   cherimoya pipeline name=atac_experiment sequences=hg38.fa \
+       'loci=[peaks.narrowPeak]' negatives=null \
+       'signals=[fragments.bam]' motifs=JASPAR_2024.meme \
+       preprocessing.pos_shift=4 preprocessing.neg_shift=-4 \
+       preprocessing.unstranded=true preprocessing.fragments=true \
+       preprocessing.paired_end=true
 
-Repeating ``-i`` adds another signal file. Repeating ``-c`` adds
-another control. Repeating ``-p`` adds another peak file. The full
-``pipeline-json`` flag list is in :doc:`../cli`.
+Lists must be quoted so the shell leaves the brackets alone. Dotted
+keys such as ``preprocessing.unstranded`` or ``fit.n_filters`` set one
+step's section.
 
-The resulting JSON has every parameter the pipeline uses, filled in
-from ``cherimoya_cli.defaults.default_pipeline_parameters``. You only
-need to edit the values you want to change from defaults; the runtime
-re-merges with defaults before each step.
+Keeping the config in a file
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Step 2: edit and run
-~~~~~~~~~~~~~~~~~~~~
-
-Open the JSON and override any defaults — model width, training and
-validation chromosomes, seqlet p-value threshold, MoDISco settings,
-anything in the JSON. To train on several GPUs, set
-``fit_parameters.devices`` to their number; ``fit_parameters.batch_size``
-is then the global batch, split evenly across them (see
-:ref:`training on several devices <cli-several-devices>`).
+For a run you will repeat or tweak, write the config to a file first.
+``--cfg job`` prints the full config, every key with its default, and
+runs nothing:
 
 .. code-block:: bash
 
-   cherimoya pipeline -p pipeline.json
+   cherimoya pipeline name=my_experiment sequences=hg38.fa \
+       'loci=[peaks.narrowPeak]' negatives=null \
+       'signals=[input1.bam,input2.bam]' \
+       'controls=[control1.bam,control2.bam]' \
+       motifs=JASPAR_2024.meme --cfg job > pipeline.yaml
 
-What this does, in order:
+Edit ``pipeline.yaml`` to change any default: model width, training
+and validation chromosomes, seqlet p-value threshold, MoDISco
+settings. Values such as ``${name}`` link a step's key to the
+top-level key, so changing ``name`` at the top renames every output.
+To train on several GPUs, set ``fit.devices`` to their number.
+``fit.batch_size`` is then the global batch, split evenly across them
+(see :ref:`training on several devices <cli-several-devices>`).
+Then run it, with or without further overrides:
+
+.. code-block:: bash
+
+   cherimoya pipeline -p pipeline.yaml
+   cherimoya pipeline -p pipeline.yaml fit.n_filters=64
+
+A typo in the file or an override is an error, and so is a required key
+left as ``???``. Local input files are checked before any work starts,
+and every missing one is listed. Remote URLs are not checked.
+
+What the pipeline does
+~~~~~~~~~~~~~~~~~~~~~~
+
+In order:
 
 1. **MACS3 peak calling** (skipped if ``loci`` is set).
 2. **bam2bw conversion** to bigWig (skipped if signals are already
    bigWigs).
 3. **GC-matched negative sampling** (skipped if ``negatives`` is set).
-4. **Model training** — writes ``{name}.torch`` (best checkpoint by
-   validation count Pearson) and ``{name}.final.torch`` (EMA weights
-   at end of training), plus ``{name}.log``, then evaluates the best
-   checkpoint on the validation and test chromosomes into
+4. **Model training** (skipped if ``model`` is set). Writes
+   ``{name}.torch`` (best checkpoint by validation count Pearson) and
+   ``{name}.final.torch`` (EMA weights at end of training), plus
+   ``{name}.log``, then evaluates the best checkpoint on the
+   validation and test chromosomes into
    ``{name}.validation.performance.tsv`` and
    ``{name}.test.performance.tsv``.
 5. **Attribution** via DeepLIFT/SHAP (or saturation mutagenesis, with
-   ``algorithm``), kept over the central 400 bp of each example, saved as ``{name}.attributions.{ohe,attr}.npz``
-   and ``{name}.attributions.idxs.npy``.
+   ``attribute.algorithm``), kept over the central 400 bp of each
+   example, saved as ``{name}.attributions.{ohe,attr}.npz`` and
+   ``{name}.attributions.idxs.npy``.
 6. **Seqlet identification** with TF-MoDISco-style recursive seqlet
    calling on the (attribution × one-hot) signal, written to
    ``{name}.seqlets.bed``.
@@ -132,37 +145,56 @@ What this does, in order:
    ``{name}.motif_seqlet_count.tsv``.
 8. **TF-MoDISco motif discovery** and HTML report; results in
    ``{name}_modisco_results.h5`` and ``{name}_modisco/``.
-9. **Marginalization** — measures the predicted effect of inserting
-   each motif into negative backgrounds. Output in
-   ``{name}_marginalize/``.
+9. **Marginalization**, if ``motifs`` was provided. Measures the
+   predicted effect of inserting each motif into background sequences
+   drawn from ``negatives``. Output in ``{name}_marginalize/``.
 
-Each sub-step writes its own JSON snapshot
-(``{name}.fit.json``, ``{name}.attribute.json``, …) so individual
-stages can be re-run in isolation, and pre-existing snapshots can be
-edited and re-run if you only need to change one stage.
+Before each of steps 3, 4, 5, 6 and 9, the pipeline saves that step's
+config as ``{name}.<command>.yaml``. With ``dry_run=true`` it writes
+these files and runs nothing, which is a cheap way to check a config.
 
 
 Running individual steps
 ------------------------
 
-Each stage has its own subcommand and JSON schema. You can run them
-directly:
+Each stage has its own subcommand. The files the pipeline saved are
+complete configs for them:
 
 .. code-block:: bash
 
-   cherimoya fit -p my_experiment.fit.json
-   cherimoya evaluate -p my_experiment.test.evaluate.json
-   cherimoya attribute -p my_experiment.attribute.json
-   cherimoya seqlets -p my_experiment.seqlets.json
-   cherimoya marginalize -p my_experiment.marginalize.json
+   cherimoya fit -p my_experiment.fit.yaml
+   cherimoya evaluate -p my_experiment.test.evaluate.yaml
+   cherimoya attribute -p my_experiment.attribute.yaml
+   cherimoya seqlets -p my_experiment.seqlets.yaml
+   cherimoya marginalize -p my_experiment.marginalize.yaml
 
-The defaults for each command are in
-``cherimoya_cli.defaults.default_*_parameters``; the merged JSON
-snapshots written by ``pipeline`` make them concrete.
+Overrides work here too, so rerunning one stage with a change needs no
+editing:
 
-The ``fit``, ``evaluate``, ``attribute``, ``seqlets`` and
-``marginalize`` JSONs also support ``"skip": true`` to no-op that
-step.
+.. code-block:: bash
+
+   cherimoya seqlets -p my_experiment.seqlets.yaml threshold=0.001 \
+       output_filename=my_experiment.strict.seqlets.bed
+
+``cherimoya <command> --help`` prints a command's keys and defaults.
+Every command but ``negatives`` also takes ``skip=true`` to no-op it.
+In a pipeline, ``attribute.skip=true`` skips one step and ``skip=true``
+skips them all.
+
+
+Training many models
+--------------------
+
+``-m`` runs one job per value, or per combination of values:
+
+.. code-block:: bash
+
+   cherimoya fit -p my_experiment.fit.yaml -m random_state=0,1,2
+
+Each job runs in its own ``multirun/<date>/<time>/<n>/`` directory, so
+the three models don't overwrite each other. Relative input paths
+still resolve against the directory you started from. To send each job
+to a SLURM cluster, see :doc:`../cli`.
 
 
 About bam2bw
@@ -189,43 +221,39 @@ invoke it directly — see its own documentation.
 Calling negatives independently
 -------------------------------
 
-``cherimoya pipeline`` calls negatives for you when the JSON's
-``negatives`` field is null. If you want to sample GC-matched
+``cherimoya pipeline`` calls negatives for you when ``negatives`` is
+``null``. If you want to sample GC-matched
 negatives without running the full pipeline (e.g. you're going to
 train a non-Cherimoya model on the same regions), use the
 ``negatives`` subcommand:
 
 .. code-block:: bash
 
-   cherimoya negatives \
-       -i peaks.narrowPeak \
-       -f hg38.fa \
-       -b signal.bw \
-       -o negatives.bed \
-       --bin_width 0.02 --max_n_perc 0.1 --beta 0.5
+   cherimoya negatives peaks=peaks.narrowPeak fasta=hg38.fa \
+       bigwig=signal.bw output=negatives.bed \
+       bin_width=0.02 max_n_perc=0.1 beta=0.5
 
 The output is a 3-column BED of regions matched by GC content to the
-input peaks, with at most ``--max_n_perc`` fraction of ``N`` bases
-and (optionally) signal below ``--beta × min(peak_counts)``.
+input peaks, with at most ``max_n_perc`` fraction of ``N`` bases
+and (optionally) signal below ``beta × min(peak_counts)``.
 
 
 Running on a non-hg38 reference
 -------------------------------
 
 The defaults assume hg38. To run on a different reference (mouse mm10,
-non-human, or a different hg version), override four keys in the
-pipeline JSON:
+non-human, or a different hg version), override four pipeline keys:
 
-* ``fit_parameters.training_chroms`` — chromosomes used to train.
+* ``fit.training_chroms``: chromosomes used to train.
   Replace with the appropriate list for your reference (e.g. mm10:
-  ``["chr1", "chr2", …, "chr19", "chrX", "chrY"]`` minus the
+  ``[chr1, chr2, …, chr19, chrX, chrY]`` minus the
   validation and test chromosomes you choose).
-* ``fit_parameters.validation_chroms`` — held-out chromosomes for
+* ``fit.validation_chroms``: held-out chromosomes for
   validation, which choose the checkpoint. Two chromosomes is enough.
-* ``fit_parameters.test_chroms`` — held-out chromosomes evaluated once
-  after training, or ``null`` for no test evaluation. ``fit`` refuses
-  to start if two of the three lists share a chromosome.
-* ``preprocessing_parameters.callpeaks_gsize`` — MACS3 effective
+* ``fit.test_chroms``: held-out chromosomes evaluated once after
+  training, or ``null`` for no test evaluation. ``fit`` refuses to
+  start if two of the three lists share a chromosome.
+* ``preprocessing.callpeaks_gsize``: MACS3 effective
   genome size. Use ``"mm"`` for mouse, ``"ce"`` for *C. elegans*,
   ``"dm"`` for fly, or a numeric value (e.g. ``"2.7e9"`` for hg38) for
   any other organism.
@@ -240,7 +268,7 @@ Outputs
 -------
 
 A successful pipeline run leaves the following in the working
-directory (with ``{name}`` from the ``-n`` flag in step 1):
+directory (with ``{name}`` from the ``name`` key):
 
 .. list-table::
    :header-rows: 1
@@ -298,7 +326,10 @@ directory (with ``{name}`` from the ``-n`` flag in step 1):
      - TF-MoDISco HTML report.
    * - ``{name}_marginalize/``
      - Motif marginalization report (HTML with PNG figures).
-   * - ``{name}.{fit,attribute,seqlets,marginalize}.json``
-     - Per-step JSON snapshots of the actual parameters used.
-   * - ``{name}.{validation,test}.evaluate.json``
-     - The evaluate JSONs ``fit`` writes and runs.
+   * - ``{name}.{negatives,fit,attribute,seqlets,marginalize}.yaml``
+     - Per-step configs, each a ``-p`` file for rerunning that step.
+   * - ``{name}.{validation,test}.evaluate.yaml``
+     - The evaluate configs ``fit`` writes and runs.
+   * - ``.hydra/pipeline/``
+     - The composed pipeline config (``config.yaml``) and the
+       command-line overrides (``overrides.yaml``).

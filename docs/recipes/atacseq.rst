@@ -33,41 +33,37 @@ offset if converting from +4 / -5. This idea was introduced with the
 ChromBPNet model.
 
 
-Generate the pipeline JSON
---------------------------
+Run the pipeline
+----------------
 
 For a paired-end BAM:
 
 .. code-block:: bash
 
-   cherimoya pipeline-json \
-       -s hg38.fa \
-       -i atac.bam \
-       -m JASPAR_2024.meme \
-       -n atac_experiment \
-       -o atac.pipeline.json \
-       -ps 4 -ns -4 -u -pe
+   cherimoya pipeline name=atac_experiment sequences=hg38.fa \
+       loci=null negatives=null 'signals=[atac.bam]' \
+       motifs=JASPAR_2024.meme \
+       preprocessing.pos_shift=4 preprocessing.neg_shift=-4 \
+       preprocessing.unstranded=true preprocessing.paired_end=true
 
-Flag-by-flag:
+Key by key:
 
-* ``-ps 4`` / ``-ns -4`` — Tn5 shift on plus and minus ends.
-* ``-u`` — unstranded output (single signal track).
-* ``-pe`` — paired-end. Causes MACS3 to use ``BAMPE`` file format
-  rather than ``BAM``.
+* ``preprocessing.pos_shift=4`` / ``preprocessing.neg_shift=-4``: Tn5
+  shift on plus and minus ends.
+* ``preprocessing.unstranded=true``: unstranded output (single signal
+  track).
+* ``preprocessing.paired_end=true``: paired-end. Causes MACS3 to use
+  ``BAMPE`` file format rather than ``BAM``.
+
+Pass ``'loci=[peaks.bed]'`` or ``'negatives=[negatives.bed]'`` instead
+of ``null`` if you have them.
 
 If your input is already a fragments TSV/BED (e.g. from
 ``snap-atac``, ``CellRanger``, or a custom ``samtools`` pipeline),
-pass the fragment file with ``-i``, add ``-f`` to indicate that the
-file is a fragment file, and drop ``-pe``; ``bam2bw`` detects the file 
-extension and handles the fragment file format.
-
-
-Run the pipeline
-----------------
-
-.. code-block:: bash
-
-   cherimoya pipeline -p atac.pipeline.json
+pass the fragment file in ``signals``, add
+``preprocessing.fragments=true`` to indicate that the file is a
+fragment file, and drop ``preprocessing.paired_end=true``; ``bam2bw``
+detects the file extension and handles the fragment file format.
 
 The steps mirror the ChIP-seq recipe, with these differences:
 
@@ -90,7 +86,7 @@ The ``PeakGenerator`` filter drops peaks above ``1.2 ×`` the 99th
 percentile of summed counts, which removes the extreme outliers. One
 parameter is worth checking after a first training run:
 
-* ``fit_parameters.max_jitter`` — the default of 500 bp randomly
+* ``fit.max_jitter``: the default of 500 bp randomly
   shifts peak centers each epoch, which improves training-set
   diversity; ATAC-seq peaks are typically wide enough to tolerate
   this. The loader extracts ``in_window + 2 * max_jitter`` bp around
