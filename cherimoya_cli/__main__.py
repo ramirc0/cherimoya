@@ -74,7 +74,7 @@ def _setup_parsers() -> argparse.ArgumentParser:
 def _task(command):
 	def task(cfg):
 		from .config import missing_keys
-		from .utils import resolve_inputs
+		from .utils import INPUT_KEYS, resolve_inputs
 
 		missing = missing_keys(cfg)
 		if missing:
@@ -82,7 +82,7 @@ def _task(command):
 				"null if an earlier pipeline step produces it.".format(
 				", ".join(sorted(missing))))
 
-		resolve_inputs(cfg)
+		resolve_inputs(cfg, INPUT_KEYS[command])
 		importlib.import_module(".commands." + command, __package__).run(cfg)
 
 	return task
