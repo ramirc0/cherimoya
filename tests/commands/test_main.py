@@ -186,6 +186,46 @@ def test_cfg_job_prints_a_template_for_p(tmp_path, monkeypatch, capsys):
 	assert cfg.loci is None
 
 
+def test_multirun_jobs_get_their_own_directories(tmp_path, monkeypatch):
+	"""Each job of a sweep runs in its own directory, so two jobs never
+	write the same file, and relative inputs still point at the launch
+	directory. The launch directory is restored afterwards."""
+
+	import os
+
+	from omegaconf import OmegaConf
+
+	for name in ("g.fa", "p.bed", "n.bed", "s.bw"):
+		(tmp_path / name).write_text("")
+	monkeypatch.chdir(tmp_path)
+
+	jobs = []
+
+	def fake_fit(cfg):
+		jobs.append((os.getcwd(), cfg.random_state, list(cfg.loci)))
+		with open(cfg.name + ".torch", "w"):
+			pass
+
+	path = _yaml(tmp_path, "name: demo\nsequences: g.fa\nloci: [p.bed]\n"
+		"negatives: [n.bed]\nsignals: [s.bw]\n")
+
+	with mock.patch("cherimoya_cli.commands.fit.run", fake_fit):
+		_main(monkeypatch, "fit", "-p", path, "-m", "random_state=0,1")
+
+	assert os.getcwd() == str(tmp_path)
+
+	(sweep,) = (tmp_path / "multirun").glob("*/*")
+	assert sorted(jobs) == [
+		(str(sweep / "0"), 0, [str(tmp_path / "p.bed")]),
+		(str(sweep / "1"), 1, [str(tmp_path / "p.bed")]),
+	]
+	for num in ("0", "1"):
+		assert (sweep / num / "demo.torch").exists()
+		saved = OmegaConf.load(sweep / num / ".hydra" / "fit" / "config.yaml")
+		assert saved.random_state == int(num)
+	assert not (tmp_path / "demo.torch").exists()
+
+
 def test_version(monkeypatch, capsys):
 	from cherimoya_cli.__main__ import __version__
 

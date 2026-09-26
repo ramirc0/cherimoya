@@ -50,6 +50,9 @@ docs = [
     "furo>=2024.1",
     "sphinx-copybutton>=0.5",
 ]
+slurm = [
+    "hydra-submitit-launcher>=1.2.0",
+]
 
 [project.scripts]
 cherimoya = "cherimoya_cli.__main__:main"
