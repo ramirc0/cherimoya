@@ -36,6 +36,7 @@ dependencies = [
     "triton>=3.5.1; sys_platform == 'linux'",
     "lightning>=2.6.1",
     "scikit-learn>=1.7.2",
+    "hydra-core>=1.3.7,<1.4",
 ]
 
 [project.urls]
@@ -54,10 +55,10 @@ docs = [
 cherimoya = "cherimoya_cli.__main__:main"
 
 [tool.setuptools]
-packages = ["cherimoya", "cherimoya_cli", "cherimoya_cli.commands"]
+packages = ["cherimoya", "cherimoya_cli", "cherimoya_cli.commands", "cherimoya_cli.conf"]
 
 [tool.setuptools.package-data]
-cherimoya_cli = ["skills/cherimoya/SKILL.md", "skills/cherimoya/references/*.md"]
+cherimoya_cli = ["skills/cherimoya/SKILL.md", "skills/cherimoya/references/*.md", "conf/*.yaml"]
 
 [tool.pytest.ini_options]
 markers = [

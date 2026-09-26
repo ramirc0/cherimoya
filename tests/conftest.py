@@ -46,3 +46,16 @@ def pytest_collection_modifyitems(config, items):
 			item.add_marker(skip_cuda)
 		if "triton" in item.keywords and not _has_triton():
 			item.add_marker(skip_triton)
+
+
+@pytest.fixture
+def make_config():
+	"""Compose a command's packaged Hydra config with `key=value` overrides."""
+	import cherimoya_cli.config  # noqa: F401 -- registers the schemas
+	from hydra import compose, initialize_config_module
+
+	def build(command, *overrides):
+		with initialize_config_module("cherimoya_cli.conf", version_base="1.3"):
+			return compose(command, list(overrides))
+
+	return build

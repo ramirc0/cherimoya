@@ -1,0 +1,4 @@
+defaults:
+  - negatives_schema
+  - settings
+  - _self_

@@ -1,0 +1,4 @@
+defaults:
+  - marginalize_schema
+  - settings
+  - _self_

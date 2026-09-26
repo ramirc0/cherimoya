@@ -1,0 +1,4 @@
+defaults:
+  - attribute_schema
+  - settings
+  - _self_

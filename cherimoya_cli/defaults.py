@@ -41,15 +41,7 @@
 # the sequence of examples, not the arithmetic. CPU runs with the same seed
 # are bitwise identical.
 
-training_chroms = ["chr2", "chr4", "chr5", "chr7", "chr9", "chr10", "chr11",
-	"chr12", "chr13", "chr14", "chr15", "chr16", "chr17", "chr18", "chr19",
-	"chr21", "chr22", "chrX", "chrY"]
-
-validation_chroms = ['chr8', 'chr20']
-
-# Held out of both lists above, and scored once after training to give a
-# performance estimate that did not take part in choosing the checkpoint.
-test_chroms = ['chr1', 'chr3', 'chr6']
+from .config import test_chroms, training_chroms, validation_chroms
 
 
 default_fit_parameters = {

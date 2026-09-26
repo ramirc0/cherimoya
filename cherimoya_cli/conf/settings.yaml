@@ -1,0 +1,12 @@
+# @package _global_
+# Hydra settings shared by every command. A single run writes its outputs
+# into the working directory, as before, and keeps the composed config and
+# overrides under .hydra/<command>/. Cherimoya reports progress with print,
+# so Hydra leaves Python logging alone.
+defaults:
+  - override /hydra/job_logging: none
+
+hydra:
+  run:
+    dir: .
+  output_subdir: .hydra/${hydra.job.config_name}
