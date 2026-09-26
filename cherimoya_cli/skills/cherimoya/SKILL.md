@@ -56,33 +56,35 @@ than a wasted training run.
 
 The required inputs for training are a **genome FASTA** and at least one
 **signal file**. Peaks, negatives, controls, and a motif database are optional
-(the pipeline generates or skips them). Before building a pipeline JSON:
+(the pipeline generates or skips them). Before building a pipeline command:
 
 - List which required inputs are present and which are missing.
-- If a required input is missing, **ask the user for it** — do not fabricate a
+- If a required input is missing, **ask the user for it**. Don't fabricate a
   path or silently proceed.
 - If an *optional* input is missing, say what the pipeline will do instead
-  (e.g. "no peaks given → MACS3 will call them", "no negatives given →
+  (e.g. "no peaks given, so MACS3 will call them", "no negatives given, so
   GC-matched negatives will be sampled") so the user can veto it.
-- `cherimoya pipeline` runs a pre-flight check and hard-fails listing every
-  missing local path. Your job is to catch this *earlier* by asking. Note that
-  remote paths (`http://`, `https://`, `s3://`, `gs://`) are skipped by the
-  check and streamed directly.
-- If a JSON key points at a file the pipeline is *supposed to produce later*
-  (e.g. `loci` pointing at a not-yet-called peak file), set that key to `null`
-  and let the pipeline make it — otherwise the pre-flight rejects the run.
+- Every command checks its local input paths before running and fails with a
+  list of every missing one. Your job is to catch this *earlier* by asking.
+  Remote paths (`http://`, `https://`, `s3://`, `gs://`) are not checked and
+  are streamed directly.
+- `loci` and `negatives` are required keys even when the user has no file.
+  Set them to `null` to have the pipeline make them (`loci=null` calls peaks,
+  `negatives=null` samples negatives). Leaving the key out is an error, and so
+  is pointing it at a file that doesn't exist yet.
 
-### 3. Use reasonable defaults — and explain them
+### 3. Use reasonable defaults and explain them
 
-Every default lives in `cherimoya_cli/defaults.py`; quote the real value, never
-a guessed one. Whenever a default or an automatic step kicks in, tell the user
-in one plain sentence what happened and why. Examples:
+Every default lives in the schemas in `cherimoya_cli/config.py`, and
+`cherimoya <command> --help` prints them. Quote the real value, never a guessed
+one. Whenever a default or an automatic step kicks in, tell the user in one
+plain sentence what happened and why. Examples:
 
 - "You didn't pass peaks, so MACS3 will call them at q < 0.05 (its default)."
-- "Training will use chr8 and chr20 as held-out validation — the hg38 default.
+- "Training will use chr8 and chr20 as held-out validation, the hg38 default.
   If your data isn't hg38, we need to change this."
 - "The model trains for at least 20 epochs, more if that is under 20,000
-  steps — early stopping is off by default — and
+  steps (early stopping is off by default), and
   the checkpoint kept is the epoch with the best validation count Pearson."
 
 The point is that a novice should never be surprised by something the pipeline
@@ -90,27 +92,31 @@ did on their behalf.
 
 ## The common request: "train a model on my data"
 
-The end-to-end flow is two commands (details in
+The end-to-end flow is one command, best kept in a config file (details in
 `references/cli-training-pipeline.md`):
 
 ```bash
-# 1. Turn raw-data pointers into a fully-populated JSON config.
-cherimoya pipeline-json -s genome.fa -i signal.bam -m motifs.meme \
-    -n my_run -o my_run.pipeline.json
+# 1. Write the full config, with every default, to a file. Runs nothing.
+cherimoya pipeline name=my_run sequences=genome.fa loci=null negatives=null \
+    'signals=[signal.bam]' motifs=motifs.meme --cfg job > my_run.yaml
 
-# 2. Run every step from that JSON.
-cherimoya pipeline -p my_run.pipeline.json
+# 2. Run every step from that file. key=value overrides still apply on top.
+cherimoya pipeline -p my_run.yaml
 ```
 
-Before running step 1, walk rule 1 and rule 2: confirm the assay, the genome
-build, and which inputs exist. Ask how many GPUs the run may use; with more
-than one, training can split each batch across them (the "Several GPUs" edit
-in `references/cli-training-pipeline.md`). `pipeline-json` fills everything else from
-defaults, and step 2 runs every stage through to marginalization. Some stages
-are conditional — notably, tomtom-lite seqlet annotation and marginalization
-run only when a motif database (`-m`) is given. See
-`references/cli-training-pipeline.md` for the per-step table and what gates each
-step.
+Before step 1, walk rule 1 and rule 2: confirm the assay, the genome build,
+and which inputs exist. Ask how many GPUs the run may use. With more than
+one, training can split each batch across them (the "Several GPUs" edit in
+`references/cli-training-pipeline.md`). Assay settings are `preprocessing.*`
+keys (see `references/assay-defaults.md`). Quote list values so the shell
+leaves the brackets alone. Step 2 runs every stage through to
+marginalization. Some stages are conditional: tomtom-lite seqlet annotation
+and marginalization run only when `motifs` is set. See
+`references/cli-training-pipeline.md` for the per-step table and what gates
+each step.
+
+Configs from older Cherimoya versions were JSON. They no longer load, and
+there is no converter; rewrite them as YAML.
 
 ## Reference map — open the one that fits the task
 
@@ -123,7 +129,7 @@ step.
 | Set assay-specific options (shifts, strandedness) | `references/assay-defaults.md` |
 | Understand what the pipeline produced | `references/interpreting-outputs.md` |
 | Fix an error or a bad-looking result | `references/troubleshooting.md` |
-| Run one subcommand or find a flag | `references/cli.md` |
+| Run one subcommand or find a config key | `references/cli.md` |
 | Save / load / run inference with the model in Python, or train from a Python script | `references/using-in-python.md` |
 | Attribute (DeepLIFT/SHAP, ISM), design, score variants | `references/using-tangermeme.md` |
 

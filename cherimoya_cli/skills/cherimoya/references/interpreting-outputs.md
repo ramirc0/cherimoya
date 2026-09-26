@@ -103,8 +103,12 @@ Only with a motif database. Inserts each known motif into background sequences
 and measures the model's predicted response — an HTML report with PNG figures of how
 much the model "cares" about each motif.
 
-## Per-step JSON snapshots
+## Per-step configs
 
-`{name}.{pipeline,fit,evaluate,attribute,seqlets,marginalize}.json` record the
-exact parameters each step ran with — the record of what happened, and they let
-you re-run any single step (`cherimoya <step> -p {name}.<step>.json`).
+`{name}.{negatives,fit,evaluate,attribute,seqlets,marginalize}.yaml` record the
+exact config each step ran with. They are the record of what happened, and
+each is a `-p` file for rerunning that step
+(`cherimoya <step> -p {name}.<step>.yaml`). Hydra also saves the composed
+config and the command-line overrides of every run in `.hydra/<command>/`.
+That `config.yaml` is written before the run, so a drawn `random_state` isn't
+in it.
