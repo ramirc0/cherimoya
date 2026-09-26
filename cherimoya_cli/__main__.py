@@ -8,16 +8,15 @@ from importlib.metadata import version, PackageNotFoundError
 
 desc = """A command-line tool for the training and usage of Cherimoya models."""
 
-_help = """Must be one of 'pipeline-json', 'pipeline', 'negatives',
-    'fit', 'evaluate', 'attribute', 'seqlets', 'marginalize', or
-    'install-skill'."""
+_help = """Must be one of 'pipeline', 'negatives', 'fit', 'evaluate',
+    'attribute', 'seqlets', 'marginalize', or 'install-skill'."""
 
 try:
 	__version__ = version("cherimoya")
 except PackageNotFoundError:
 	__version__ = "0.0.0+unknown"
 
-# Commands configured by Hydra; the rest still parse their own arguments.
+# Commands configured by Hydra. `install-skill` parses its own arguments.
 HYDRA_COMMANDS = {
 	"negatives": "Sample GC-matched negatives.",
 	"fit": "Fit a Cherimoya model.",
@@ -41,102 +40,6 @@ def _setup_parsers() -> argparse.ArgumentParser:
 
 	for command, description in HYDRA_COMMANDS.items():
 		subparsers.add_parser(command, help=description)
-
-	# Pipeline JSON
-	pipeline_json_parser = subparsers.add_parser(
-		"pipeline-json",
-		help="Make a pipeline JSON file given the provided information.",
-	)
-	pipeline_json_parser.add_argument(
-		"-s", "--sequences", type=str, required=True,
-		help="The FASTA file of sequences."
-	)
-	pipeline_json_parser.add_argument(
-		"-i",
-		"--inputs",
-		type=str,
-		action="append",
-		required=True,
-		help="A BAM or bigwig file. Repeatable.",
-	)
-	pipeline_json_parser.add_argument(
-		"-c",
-		"--controls",
-		type=str,
-		action="append",
-		help="A BAM or bigwig file. Repeatable.",
-	)
-	pipeline_json_parser.add_argument(
-		"-p",
-		"--peaks",
-		type=str,
-		action="append",
-		help="A BED-formatted file of peaks to use. Repeatable.",
-	)
-	pipeline_json_parser.add_argument(
-		"-neg",
-		"--negatives",
-		type=str,
-		action="append",
-		help="A BED-formatted file of negative loci to use. Repeatable.",
-	)
-	pipeline_json_parser.add_argument(
-		"-n", "--name", type=str, required=True,
-		help="Name to use as a suffix in intermediary files."
-	)
-	pipeline_json_parser.add_argument(
-		"-u",
-		"--unstranded",
-		action="store_true",
-		default=False,
-		help="Whether the input is unstranded.",
-	)
-	pipeline_json_parser.add_argument(
-		"-f",
-		"--fragments",
-		action="store_true",
-		default=False,
-		help="Whether the input are fragments or reads.",
-	)
-	pipeline_json_parser.add_argument(
-		"-ps",
-		"--pos_shift",
-		type=int,
-		default=0,
-		help="How many bp to shift the + strand reads.",
-	)
-	pipeline_json_parser.add_argument(
-		"-ns",
-		"--neg_shift",
-		type=int,
-		default=0,
-		help="how many bp to shift the - strand reads.",
-	)
-	pipeline_json_parser.add_argument(
-		"-m",
-		"--motifs",
-		type=str,
-		default=None,
-		help="A motif database for marginalization and TF-MoDISco.",
-	)
-	pipeline_json_parser.add_argument(
-		"-o", "--output", type=str, required=True,
-		help="The filename for the pipeline JSON."
-	)
-	pipeline_json_parser.add_argument(
-		"-pe",
-		"--paired_end",
-		action="store_true",
-		default=False,
-		help="Whether the input is paired-end.",
-	)
-	pipeline_json_parser.add_argument(
-		"-sf",
-		"--scale_factor",
-		type=float,
-		default=1,
-		help="Whether to scale the read counts. 1 is no scaling.",
-	)
 
 	# Install skill
 	install_skill_parser = subparsers.add_parser(
@@ -217,14 +120,9 @@ def main():
 	parser = _setup_parsers()
 	args = parser.parse_args()
 
-	COMMANDS = {
-		"pipeline-json": "pipeline_json",
-		"install-skill": "install_skill",
-	}
+	from .commands import install_skill
 
-	mod = importlib.import_module(f".commands.{COMMANDS[args.cmd]}",
-		package=__package__)
-	mod.run(args)
+	install_skill.run(args)
 
 
 if __name__ == "__main__":

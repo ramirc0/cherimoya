@@ -7,9 +7,6 @@ marginalization guard is documented as skipping a stage when no motif
 database is given; both terminated the interpreter instead.
 """
 
-import argparse
-import json
-
 import pytest
 
 
@@ -43,68 +40,6 @@ def test_pipeline_without_motifs_returns(run_pipeline):
 	"""The marginalization guard skips a stage, not the interpreter."""
 
 	assert run_pipeline(motifs=None) is None
-
-
-def test_pipeline_json_returns_and_writes_the_flags(tmp_path):
-	"""`pipeline-json` returns rather than exiting, and the JSON it writes
-	holds the flags over the pipeline defaults."""
-
-	from cherimoya_cli.commands import pipeline_json
-	from cherimoya_cli.defaults import default_pipeline_parameters
-
-	out = tmp_path / "pipeline.json"
-	args = argparse.Namespace(
-		sequences="g.fa", peaks=["p.bed"], negatives=None, inputs=["s.bw"],
-		controls=None, name="demo", motifs="m.meme", unstranded=True,
-		fragments=False, pos_shift=4, neg_shift=-4, paired_end=True,
-		scale_factor=2.0, output=str(out))
-
-	assert pipeline_json.run(args) is None
-	cfg = json.loads(out.read_text())
-
-	assert (cfg["sequences"], cfg["loci"], cfg["negatives"], cfg["signals"],
-		cfg["name"], cfg["motifs"]) == ("g.fa", ["p.bed"], None, ["s.bw"],
-		"demo", "m.meme")
-	assert {k: cfg["preprocessing_parameters"][k] for k in ("unstranded",
-		"pos_shift", "neg_shift", "paired_end", "scale_factor")} == {
-		"unstranded": True, "pos_shift": 4, "neg_shift": -4,
-		"paired_end": True, "scale_factor": 2.0}
-	assert cfg["fit_parameters"] == default_pipeline_parameters["fit_parameters"]
-
-
-##
-# pipeline-json argument requirements
-##
-
-
-@pytest.mark.parametrize("missing", ["sequences", "inputs", "name",
-	"output"])
-def test_pipeline_json_requires_its_four_inputs(missing):
-	"""Omitting one used to produce a JSON full of nulls, or a
-	`TypeError` from `open(None)`. argparse should say which flag is
-	missing instead."""
-
-	from cherimoya_cli.__main__ import _setup_parsers
-
-	argv = ["pipeline-json", "-s", "g.fa", "-i", "s.bw", "-n", "demo",
-		"-o", "p.json"]
-	flag = {"sequences": "-s", "inputs": "-i", "name": "-n",
-		"output": "-o"}[missing]
-	i = argv.index(flag)
-	del argv[i:i + 2]
-
-	with pytest.raises(SystemExit):
-		_setup_parsers().parse_args(argv)
-
-
-def test_pipeline_json_accepts_all_four():
-	from cherimoya_cli.__main__ import _setup_parsers
-
-	args = _setup_parsers().parse_args(["pipeline-json", "-s", "g.fa",
-		"-i", "s.bw", "-n", "demo", "-o", "p.json"])
-
-	assert args.sequences == "g.fa"
-	assert args.output == "p.json"
 
 
 def test_pipeline_skip_runs_no_step(tmp_path, run_pipeline):

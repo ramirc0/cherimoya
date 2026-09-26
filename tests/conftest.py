@@ -59,3 +59,15 @@ def make_config():
 			return compose(command, list(overrides))
 
 	return build
+
+
+@pytest.fixture(autouse=True)
+def _clear_hydra_config():
+	"""`hydra.main` leaves the run's config set after it returns, so
+	`to_absolute_path` would resolve later tests' paths against that run's
+	directory."""
+
+	yield
+	from hydra.core.hydra_config import HydraConfig
+
+	HydraConfig.instance().cfg = None
