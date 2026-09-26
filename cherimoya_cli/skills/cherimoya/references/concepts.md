@@ -78,7 +78,9 @@ The "what did the model learn" chain, in order:
   `max_epochs`, so stopping early cuts the cosine decay short.
 - **Random state (seed)** — fixes the model's initial weights and the order the
   sampler draws examples in, so a run can be repeated. Defaults to `0`; set it
-  to `null` and one is drawn, printed, and recorded in the evaluate JSONs. Two
+  to `null` and one is drawn and printed (`Drew random_state=N; ...`). The
+  pipeline also saves it in `{name}.fit.yaml`; a standalone `fit` records it
+  only in that printed line. Two
   runs with the same seed are bitwise identical on CPU. On GPU they share an
   initialization and an example order but diverge as training compounds the
   last-bit differences from the fused kernel's atomic reductions — a seed
@@ -90,4 +92,4 @@ The "what did the model learn" chain, in order:
   step. `batch_size` is the **global** batch, summed over GPUs, so the training
   schedule (steps, epochs, warmup) is the same on one GPU or several.
 
-For every default value, see `references/cli.md` or `cherimoya_cli/defaults.py`.
+For every default value, see `references/cli.md` or `cherimoya_cli/config.py`.

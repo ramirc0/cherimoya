@@ -118,13 +118,14 @@ Rules of thumb:
   back to `max-autotune-no-cudagraphs` on a CUDA-graph error, and to
   `compile=False` only if that still fails.
 
-The same two settings are JSON keys on `evaluate`, `attribute` and
-`marginalize`, and at the top level of a `pipeline` JSON where one value reaches
-every step that loads a model: `{"compile": false}`,
-`{"compile_mode": "max-autotune-no-cudagraphs"}`. Reach for them when a CLI run
-hits a compile or CUDA-graph traceback. `attribute` is the exception: it
-defaults to `compile: false` (neither algorithm ran faster compiled) and never
-compiles under DeepLIFT/SHAP.
+The same two settings are config keys on `fit` (for training and its
+evaluations), `evaluate`, `attribute` and `marginalize`: `compile=false`,
+`compile_mode=max-autotune-no-cudagraphs`.
+Reach for them when a CLI run hits a compile or CUDA-graph traceback.
+`attribute` defaults to `compile=false` (neither algorithm ran faster compiled)
+and never compiles under DeepLIFT/SHAP. At the top level of a `pipeline`
+config, `compile` reaches fit and marginalize, and `compile_mode` reaches fit,
+attribute and marginalize.
 
 ### Things to tell users about checkpoints
 

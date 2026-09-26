@@ -16,11 +16,12 @@ symptom here first. Authoritative version:
 ## "CUDA out of memory" at the start of training
 
 Cheapest fixes first:
-1. Lower `fit_parameters.batch_size` (64 → 32 → 16 → 8).
-2. Set `fit_parameters.dtype` to `"bfloat16"` (bf16 autocast).
-3. Shrink the model: `fit_parameters.n_filters` (128 → 96).
-4. With more than one GPU free, set `fit_parameters.devices`: `batch_size` is
-   the global batch, so each GPU holds `batch_size / devices` examples.
+1. Lower `fit.batch_size` (64 → 32 → 16 → 8), e.g. `fit.batch_size=32` on the
+   pipeline or `batch_size=32` on `cherimoya fit`.
+2. Set `fit.dtype=bfloat16` (bf16 autocast).
+3. Shrink the model: `fit.n_filters` (128 → 96).
+4. With more than one GPU free, set `fit.devices`: `batch_size` is the global
+   batch, so each GPU holds `batch_size / devices` examples.
 
 The default (batch 64, 2114 bp window, 9-layer/128-filter model) fits
 comfortably on a 16 GB GPU. Reducing batch size is cheapest; don't change model
@@ -42,7 +43,7 @@ complexity without user input.
 
 ## "CUDA out of memory" in the attribute step
 
-Under DeepLIFT/SHAP (the default `algorithm`), `attribute_parameters.batch_size`
+Under DeepLIFT/SHAP (the default `algorithm`), `attribute.batch_size`
 counts sequence-reference pairs, each run forward and backward. On the default
 model at 2114 bp, 16 pairs peaked at 4.0 GB, 32 at 7.8 GB, 64 at 15.5 GB and 512
 at 124 GB, with about the same wall time at each. Lower
@@ -72,9 +73,9 @@ By likelihood:
    the grouping the user intends. Confirm a stranded `(+, -)` pair
    is nested (`[["plus.bw","minus.bw"]]`), not flat (see
    `references/input-files.md`).
-2. **bf16 overflow in the count head** — with `dtype: "bfloat16"` and very large
-   per-locus counts. Rerun in `float32` to confirm; if that fixes it, scale the
-   signal down with `preprocessing_parameters.scale_factor`.
+2. **bf16 overflow in the count head** — with `fit.dtype=bfloat16` and very
+   large per-locus counts. Rerun in `float32` to confirm; if that fixes it, scale
+   the signal down with `preprocessing.scale_factor`.
 
 ## "Stranded predictions come almost entirely from one strand"
 
@@ -117,7 +118,7 @@ is bit-identical for single-channel groups). See the CHANGELOG entry
 
 - A large BAM can take ~10 min in MACS3 — normal.
 - Empty peak file on a small BAM → `callpeaks_q` too strict; try 0.1 or 0.5.
-- Wrong auto-detected format → set `preprocessing_parameters.callpeaks_format`
+- Wrong auto-detected format → set `preprocessing.callpeaks_format`
   explicitly (e.g. `BAMPE` for paired-end).
 
 ## "bam2bw couldn't open a remote URL"
@@ -141,8 +142,37 @@ model = Cherimoya.load("checkpoint.torch", device="cuda",
                        compile_mode='max-autotune-no-cudagraphs')
 ```
 
+From the CLI, rerun the step with the setting as an override:
+
+```bash
+cherimoya evaluate -p my_run.test.evaluate.yaml compile=false
+cherimoya evaluate -p my_run.test.evaluate.yaml compile_mode=max-autotune-no-cudagraphs
+```
+
+For the evaluations that `fit` runs after training, set `compile=false` on
+`fit` or at the top of a pipeline, or rerun one as above from
+`{name}.validation.evaluate.yaml` or `{name}.test.evaluate.yaml`.
+
 For fastest inference, call `model.eval()` before predicting so the megakernel
 reuses its bf16 weight cast.
+
+## "Key 'x' not in 'FitConfig'" or "Must provide a value for: ..."
+
+The config was rejected before any work started. The first is a typo or a key
+that command doesn't have (check `cherimoya <command> --help`); in a pipeline,
+step keys are dotted (`fit.n_filters`, not `n_filters`). Hydra's message also
+suggests `To append to your config use +n_filter=...`. **Don't follow it:** the
+`+` form adds the misspelled key without error, and nothing reads it. Fix the
+spelling instead. The second lists every
+required key with no value. In a pipeline, set `loci` or `negatives` to `null`
+to have the pipeline produce them.
+
+## "FileNotFoundError: The following inputs are missing"
+
+Every local input path is checked before running, relative to the directory
+the command started in. Fix the path, or, if the pipeline is supposed to make
+the file, set that key to `null`. Old JSON configs don't load; rewrite them as
+YAML.
 
 ## "Cherimoya.load rejects a checkpoint" (`KeyError: 'config'` or `UnpicklingError: Weights only load failed`)
 
