@@ -194,9 +194,6 @@ Other conventions
   files. ``pipeline`` also takes a single path for ``loci`` and
   ``negatives``.
 
-Some keys are declared but not read by any command. Setting them has no
-effect; the tables below say so where it applies.
-
 
 cherimoya fit
 -------------
@@ -733,7 +730,7 @@ that ``attribute`` excluded are already marked in its index file, so
      - Flanking bases retained on each side.
    * - ``verbose``
      - ``false``
-     - Not read.
+     - Print the number of seqlets called.
    * - ``output_filename``
      - ``"seqlets.bed"``
      - Output BED.

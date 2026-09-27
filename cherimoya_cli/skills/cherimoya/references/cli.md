@@ -82,12 +82,6 @@ Quote these; don't guess others. Read `cherimoya_cli/config.py` or the docs.
   0.05.
 - Seqlets: `threshold` 0.01, lengths 4 to 25 bp, `additional_flanks` 3.
 
-## Keys that do nothing
-
-Some declared keys are never read. Don't suggest them as fixes:
-
-- `seqlets.verbose`.
-
 ## `min_total_steps`: an epoch is not a fixed amount of training
 
 An epoch is one pass over the peaks, so `max_epochs` alone buys a step count
