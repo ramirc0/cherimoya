@@ -1,6 +1,83 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+Configuration (**breaking**)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **The CLI is configured with Hydra, and JSON configs are gone.** Every
+  command except ``install-skill`` composes its config from a typed schema
+  in ``cherimoya_cli/config.py``, which replaces ``defaults.py``. Keys are
+  set as overrides (``cherimoya fit name=ctcf 'signals=[ctcf.bw]'``), from
+  a YAML file with ``-p``, or both; overrides win over the file. **A JSON
+  passed to** ``-p`` **no longer works.** A pipeline's
+  ``<step>_parameters`` blocks become step nodes (``fit``, ``attribute``,
+  ``seqlets``, ``marginalize``, ``preprocessing``, ``annotation``,
+  ``modisco_motifs``, ``modisco_report``, and the new
+  ``negative_sampling``), so ``"fit_parameters": {"batch_size": 32}``
+  is now ``fit.batch_size=32``.
+
+* **An unknown key is now an error.** The old merge passed any key it did
+  not recognise through to the step, which ignored it, so a typo silently
+  ran with the default. Hydra now rejects the key and names the schema.
+  That includes the keys v0.3.0 removed but still accepted: the fit
+  ``performance_filename``, the seqlets ``exclusion_lists`` and
+  ``in_window``, ``attribute_parameters.out_window``, the pipeline's
+  ``fit_parameters.count_loss_weight``, and
+  ``marginalize_parameters.output_folder``, which v0.3.0 renamed to
+  ``output_filename``. It also includes ``marginalize.out_window``,
+  removed below. A config that still sets one now fails.
+
+* ``cherimoya pipeline-json`` is removed. ``cherimoya pipeline ... --cfg
+  job`` prints the fully composed config, which runs unchanged as a
+  ``-p`` file. The old flags become the pipeline's top-level keys and its
+  ``preprocessing`` keys, such as ``preprocessing.fragments=true``.
+
+* ``cherimoya negatives`` loses its flags. Its keys take the old long
+  flag names, so ``-i peaks.bed -f hg38.fa -o neg.bed`` is now
+  ``peaks=peaks.bed fasta=hg38.fa output=neg.bed``.
+
+* ``cherimoya pipeline`` saves each step's resolved config as
+  ``<name>.<command>.yaml`` in place of ``<name>.<command>.json``, and
+  ``cherimoya <command> -p <name>.<command>.yaml`` reruns that step
+  alone. It now also saves ``<name>.negatives.yaml``. ``fit`` saves its
+  evaluate configs as ``<name>.validation.evaluate.yaml`` and
+  ``<name>.test.evaluate.yaml``. Each run also keeps its
+  composed config and overrides under ``.hydra/<command>/``.
+
+* Every command now checks its local input files before starting and
+  lists all the missing ones at once, with ``FileNotFoundError: The
+  following inputs are missing:``. Only ``pipeline`` checked before.
+  Relative input paths are made absolute against the launch directory.
+  Remote paths (``http://``, ``https://``, ``gs://``, ``s3://``) are not
+  checked.
+
+* ``-m`` runs a sweep, such as ``cherimoya fit -p run.yaml -m
+  random_state=0,1,2``. Each job runs in its own directory,
+  ``multirun/<date>/<time>/<job number>/``, so jobs never overwrite
+  each other's outputs. The new ``slurm`` extra
+  (``pip install cherimoya[slurm]``) installs
+  ``hydra-submitit-launcher``, and ``hydra/launcher=submitit_slurm``
+  submits each job to SLURM. The job name is ``cherimoya-<command>``.
+
+* ``marginalize.out_window`` is removed. Marginalize extracts no signal,
+  so nothing could read it.
+
+* ``hydra-core>=1.3.7,<1.4`` is a new dependency.
+
+Bug fixes
+~~~~~~~~~
+
+* A pipeline with ``random_state: null`` drew a seed inside ``fit`` only.
+  The top-level key stayed null, so attribute and marginalize ran
+  unseeded. The pipeline now draws one seed before any step, prints it
+  and records it in every step's YAML.
+
+* ``cherimoya seqlets`` ignored ``verbose``. It now prints ``Called N
+  seqlets.``
+
 v0.3.0
 ------
 

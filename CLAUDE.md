@@ -9,7 +9,7 @@ with custom Triton kernels and an end-to-end CLI.
                        is private and may break between versions.
 - `cherimoya_cli/`   — `cherimoya` console script. Subcommands in
                        `commands/`; **all CLI defaults live in
-                       `cherimoya_cli/defaults.py`** — edit there, not in
+                       `cherimoya_cli/config.py`** — edit there, not in
                        individual subcommand files.
 - `tests/`           — pytest suite. CPU-only by default; CUDA/Triton tests
                        are auto-skipped when a GPU isn't visible.
@@ -32,8 +32,9 @@ cd docs && sphinx-build -W -b html . _build/html   # strict docs build
 cherimoya --help                       # CLI entry (see docs/cli.rst)
 ```
 
-Subcommands: `pipeline-json`, `pipeline`, `negatives`, `fit`, `evaluate`,
-`attribute`, `seqlets`, `marginalize`, `batch`.
+Subcommands: `pipeline`, `negatives`, `fit`, `evaluate`, `attribute`,
+`seqlets`, `marginalize`, `install-skill`. All but `install-skill` take
+Hydra overrides (`key=value`) and `-p run.yaml`.
 
 ## Conventions
 - **Indentation: tabs**, not spaces. Don't let formatters convert.
@@ -62,11 +63,17 @@ Subcommands: `pipeline-json`, `pipeline`, `negatives`, `fit`, `evaluate`,
 - **Reproducibility contract:** peak/negative sampling is a pure function
   of `(seed, epoch, index)`. `num_workers > 1` must produce the same batch
   sequence as `num_workers = 1`. Don't introduce worker-local RNG state.
-- **`cherimoya pipeline` pre-flight check:** local input paths are
-  validated before any expensive work starts; remote paths (`http://`,
-  `https://`, `s3://`, `gs://`) are skipped. If a JSON key points at a
-  file the pipeline itself is supposed to produce later, set it to
+- **Pre-flight check:** every Hydra command validates its local input
+  paths before any expensive work starts and raises
+  `The following inputs are missing:`; remote paths (`http://`,
+  `https://`, `s3://`, `gs://`) are skipped. If a pipeline key points at
+  a file the pipeline itself is supposed to produce later, set it to
   `null` so the pre-flight doesn't reject the run.
+- **Multi-device fit re-runs the command:** Lightning starts each extra
+  rank by re-running `sys.argv`. `__main__._task` rewrites it to the
+  current job alone, the pipeline runs such a fit as its own subprocess,
+  and `fit.run` destroys the process group afterward so the next sweep
+  job starts its own ranks.
 
 ## Dependencies worth knowing
 - `tangermeme` — `io.extract_loci`, `predict`, `saturation_mutagenesis`,
