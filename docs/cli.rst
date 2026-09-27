@@ -359,8 +359,8 @@ chromosomes that chose the checkpoint; the test numbers do not.
        See :ref:`what a seed fixes <reproducibility>`. ``null`` draws a
        seed and prints ``Drew random_state=N; set random_state=N to
        repeat this run.`` A standalone ``fit`` records the drawn seed
-       only in that line; the pipeline also saves it in
-       ``<name>.fit.yaml``.
+       only in that line; the pipeline also saves it in its step
+       YAML files.
    * - ``compile`` / ``compile_mode``
      - ``true`` / ``"max-autotune"``
      - Applied to the training model and to both evaluations, as for
@@ -946,9 +946,9 @@ filled in, as ``<name>.<command>.yaml``.
        steps keep their own.
    * - ``random_state``
      - 0
-     - Seed shared by fit, attribute and marginalize. ``null`` draws a
-       seed in fit, prints it and saves it in ``<name>.fit.yaml``;
-       attribute and marginalize then get ``null``.
+     - Seed shared by fit, attribute and marginalize. ``null`` draws
+       one seed before any step runs, prints it, and saves it in every
+       step's YAML file.
    * - ``compile`` / ``compile_mode``
      - ``true`` / ``"max-autotune"``
      - ``compile`` reaches fit and marginalize; the attribute step keeps

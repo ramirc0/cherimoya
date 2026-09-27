@@ -199,8 +199,8 @@ the ``cherimoya`` CLI:
        handling across ranks, parameter routing to the three
        optimizers, and the fit defaults.
    * - ``tests/commands/test_pipeline.py``
-     - Which keys a pipeline config may leave out, and the saved
-       ``<name>.fit.yaml`` recording a drawn seed.
+     - Which keys a pipeline config may leave out, and a drawn seed
+       reaching every step.
    * - ``tests/commands/test_pipeline_dry_run.py``
      - ``dry_run`` writing the per-step YAML files and nothing else.
    * - ``tests/commands/test_step_skipping.py``

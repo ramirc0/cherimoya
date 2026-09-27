@@ -353,9 +353,9 @@ an independent replicate; vary the seed to get replicates, for example
 with a sweep: ``cherimoya fit -p run.yaml -m random_state=0,1,2``.
 Setting it to ``null`` does not turn seeding off. A seed is drawn and
 printed, so a run made without planning to repeat it can still be
-repeated. ``cherimoya pipeline`` also saves the drawn seed in
-``<name>.fit.yaml``; a standalone ``cherimoya fit`` records it only in
-the printed line.
+repeated. ``cherimoya pipeline`` draws one seed for all its steps and
+saves it in each step's YAML file; a standalone ``cherimoya fit``
+records it only in the printed line.
 
 What the seed does not buy is bitwise equality on CUDA. The fused
 convolution + normalization kernel accumulates its per-example

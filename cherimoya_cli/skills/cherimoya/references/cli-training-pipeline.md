@@ -182,10 +182,10 @@ Worth telling a user up front:
   peaks.
 - `{name}.torch` is the best-validation checkpoint the later steps load. See
   `references/interpreting-outputs.md` for `.torch` vs `.final.torch`.
-- **Seeds.** With `random_state=null`, fit draws a seed, prints `Drew
-  random_state=N; set random_state=N to repeat this run.` and the pipeline
-  saves it in `{name}.fit.yaml`. Attribute and marginalize then run with
-  `null` (unseeded).
+- **Seeds.** With `random_state=null`, the pipeline draws one seed before any
+  step, prints `Drew random_state=N; set random_state=N to repeat this run.`
+  and saves it in every step's YAML file, so fit, attribute and marginalize
+  share it.
 
 ## Rerunning a single step
 

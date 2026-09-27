@@ -11,6 +11,8 @@ def run(cfg):
 	step node that interpolates it sees the new value. Before a step runs,
 	its resolved node is saved as `<name>.<command>.yaml`, which reruns
 	that step alone with `cherimoya <command> -p <name>.<command>.yaml`.
+	A null `random_state` is drawn once, before any step, so every step
+	shares it.
 	With `dry_run`, the step configs are saved and nothing is run. With
 	`skip`, nothing is saved or run.
 
@@ -39,6 +41,10 @@ def run(cfg):
 	from . import marginalize as marginalize_cmd
 	from . import negatives as negatives_cmd
 	from . import seqlets as seqlets_cmd
+	from ..utils import draw_random_state
+
+	if cfg.random_state is None:
+		cfg.random_state = draw_random_state()
 
 	preprocess = cfg.preprocessing
 	pname = cfg.name
@@ -237,8 +243,6 @@ def run(cfg):
 				"{}.fit.yaml".format(pname)], check=True)
 		elif not cfg.dry_run:
 			fit_cmd.run(cfg.fit)
-			# Records the seed fit drew if `random_state` was null.
-			save(cfg.fit, "fit")
 
 	###
 	# Step 2: Calculate attributions

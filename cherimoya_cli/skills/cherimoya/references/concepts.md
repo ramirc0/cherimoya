@@ -79,8 +79,8 @@ The "what did the model learn" chain, in order:
 - **Random state (seed)** — fixes the model's initial weights and the order the
   sampler draws examples in, so a run can be repeated. Defaults to `0`; set it
   to `null` and one is drawn and printed (`Drew random_state=N; ...`). The
-  pipeline also saves it in `{name}.fit.yaml`; a standalone `fit` records it
-  only in that printed line. Two
+  pipeline draws one seed for every step and saves it in each step's YAML
+  file; a standalone `fit` records it only in that printed line. Two
   runs with the same seed are bitwise identical on CPU. On GPU they share an
   initialization and an example order but diverge as training compounds the
   last-bit differences from the fused kernel's atomic reductions — a seed

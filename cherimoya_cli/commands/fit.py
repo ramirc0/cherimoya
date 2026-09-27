@@ -104,13 +104,11 @@ def run(cfg):
 	"""
 
 	import dataclasses
-	import hashlib
 	import itertools
 	import os
 
 	os.environ["TORCH_CUDNN_V8_API_ENABLED"] = "1"
 
-	import numpy
 	import torch
 	import lightning
 	from lightning.pytorch.utilities import rank_zero_only
@@ -125,6 +123,7 @@ def run(cfg):
 
 	from . import evaluate as evaluate_cmd
 	from ..config import EvaluateConfig
+	from ..utils import draw_random_state
 
 	# With more than one device, Lightning starts every rank after the
 	# first by re-running this command, so everything up to the fit runs
@@ -148,36 +147,9 @@ def run(cfg):
 				"most one split, or set test_chroms=null to skip the test "
 				"evaluation.".format(a, b, shared))
 
-	# Resolve the seed before anything draws from an RNG. A null
-	# `random_state` means "pick one and tell me" rather than "stay
-	# unseeded": the run still varies between invocations, but the seed
-	# that produced it is printed, so the run can be repeated afterwards.
-	# The ranks Lightning launches after the first read rank 0's draw from
-	# `PL_GLOBAL_SEED`, which `seed_everything` sets before they start;
-	# rank 0 itself always draws, so a value left in the environment by an
-	# earlier run in the same process is ignored. Under `srun` every rank
-	# starts at once, so there is no draw to inherit, and each derives the
-	# same seed from the job step instead.
+	# Resolve the seed before anything draws from an RNG.
 	if parameters["random_state"] is None:
-		seed = None
-		if int(os.environ.get("LOCAL_RANK", 0)) > 0:
-			seed = os.environ.get("PL_GLOBAL_SEED")
-		elif int(os.environ.get("SLURM_NTASKS", 1)) > 1:
-			step = "{}.{}".format(os.environ.get("SLURM_JOB_ID"),
-				os.environ.get("SLURM_STEP_ID", 0))
-			seed = int(hashlib.sha256(step.encode()).hexdigest(), 16) % (2**31 - 1)
-			say("Derived random_state={0} from SLURM job step {1}; set "
-				"random_state={0} to repeat this run.".format(seed, step))
-
-		if seed is None:
-			seed = int(numpy.random.randint(0, 2**31 - 1))
-
-			# Printed whether or not `verbose` is set: a drawn seed is
-			# the one part of the run that cannot be recovered afterwards.
-			say("Drew random_state={0}; set random_state={0} to repeat this "
-				"run.".format(seed))
-
-		parameters["random_state"] = int(seed)
+		parameters["random_state"] = draw_random_state()
 		cfg.random_state = parameters["random_state"]
 
 	# The sampler and the model each take the seed directly; this covers

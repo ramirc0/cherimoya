@@ -43,8 +43,8 @@
 # order. Set it to any other integer to get an independent run -- rerunning
 # the same config unchanged reproduces the same model rather than giving an
 # independent replicate. Setting it to null does not turn seeding off; it
-# means "draw a seed and print it". The pipeline also records the drawn
-# seed in `<name>.fit.yaml`.
+# means "draw a seed and print it". The pipeline draws one seed for every
+# step and records it in each step's `<name>.<command>.yaml`.
 #
 # Seeding does not make CUDA training bitwise reproducible. The fused
 # conv+norm kernel reduces with relaxed atomics, so the summation order
