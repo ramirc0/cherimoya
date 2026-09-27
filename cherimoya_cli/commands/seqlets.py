@@ -49,6 +49,9 @@ def run(cfg):
 		additional_flanks=parameters["additional_flanks"],
 	).sort_values("attribution", ascending=False)
 
+	if parameters["verbose"]:
+		print("Called {} seqlets.".format(len(seqlets)))
+
 	# The attributed slice is centred inside the extraction window and
 	# narrower than it, so the window to convert against is the slice's
 	# own width, read off the array rather than from a parameter.

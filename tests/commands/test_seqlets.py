@@ -12,6 +12,7 @@ from unittest import mock
 
 import numpy
 import pandas
+import pytest
 from omegaconf import OmegaConf
 
 from cherimoya_cli.config import SeqletsConfig
@@ -59,7 +60,8 @@ def _write_inputs(tmp_path, n_loci=1, width=ATTR_WIDTH):
 	return bed, ohe, attr, idx
 
 
-def _run_seqlets(tmp_path, seqlet_frame, n_loci=1, width=ATTR_WIDTH):
+def _run_seqlets(tmp_path, seqlet_frame, n_loci=1, width=ATTR_WIDTH,
+		verbose=False):
 	"""Run the seqlets command with `recursive_seqlets` stubbed out to
 	return `seqlet_frame`, and return the emitted BED as a DataFrame."""
 
@@ -71,7 +73,7 @@ def _run_seqlets(tmp_path, seqlet_frame, n_loci=1, width=ATTR_WIDTH):
 	cfg = OmegaConf.structured(SeqletsConfig(
 		additional_flanks=0,
 		chroms=[LOCUS_CHROM],
-		verbose=False,
+		verbose=verbose,
 		loci=str(bed),
 		ohe_filename=str(ohe),
 		attr_filename=str(attr),
@@ -180,3 +182,17 @@ def test_no_seqlets_writes_an_empty_bed(tmp_path):
 	out = _run_seqlets(tmp_path, empty)
 
 	assert len(out) == 0
+
+
+@pytest.mark.parametrize("verbose", [True, False])
+def test_verbose_reports_the_seqlet_count(tmp_path, capsys, verbose):
+	"""`verbose` prints how many seqlets were called. It used to be
+	declared and ignored."""
+
+	frame = pandas.DataFrame({
+		"example_idx": [0, 0], "start": [100, 200], "end": [110, 210],
+		"attribution": [1.0, 0.5], "p-value": [0.0, 0.0]})
+
+	_run_seqlets(tmp_path, frame, verbose=verbose)
+
+	assert ("Called 2 seqlets." in capsys.readouterr().out) == verbose

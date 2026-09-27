@@ -47,12 +47,6 @@ READERS = {
 	C.ModiscoReportConfig: "pipeline",
 }
 
-# Declared keys no module reads today. Pinned so a new one fails the test.
-KNOWN_UNREAD = {
-	(C.SeqletsConfig, "verbose"),
-}
-
-
 ##
 
 
@@ -76,7 +70,7 @@ def test_every_declared_key_is_read(schema):
 		# fit hands the evaluation after training every key the two share.
 		unread -= {field.name for field in dataclasses.fields(C.EvaluateConfig)}
 
-	assert unread == {key for s, key in KNOWN_UNREAD if s is schema}
+	assert not unread
 
 
 def test_marginalize_output_key_is_declared():
