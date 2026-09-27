@@ -244,5 +244,6 @@ cherimoya fit -p my_run.fit.yaml -m random_state=0,1,2 \
 ```
 
 Ask the user for the partition name and time limit; they are cluster-specific.
-Launcher logs go to `.submitit/` inside the sweep directory. Adding `--cfg
+Launcher logs go to `.submitit/` inside the sweep directory, and `squeue` lists
+the jobs as `cherimoya-fit` (or `cherimoya-<command>`). Adding `--cfg
 hydra` (without `-m`) prints every launcher setting.

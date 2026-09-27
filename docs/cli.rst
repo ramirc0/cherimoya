@@ -167,7 +167,7 @@ adds the `submitit launcher
 
 ``hydra/launcher=submitit_local`` runs the jobs as local subprocesses
 instead. Both launchers keep their logs in ``.submitit/`` inside the
-sweep directory. ``cherimoya fit ... hydra/launcher=submitit_slurm
+sweep directory, and SLURM lists each job as ``cherimoya-<command>``. ``cherimoya fit ... hydra/launcher=submitit_slurm
 --cfg hydra`` prints every launcher setting.
 
 Other conventions
