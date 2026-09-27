@@ -805,9 +805,6 @@ effect.
      - 2114
      - Width of the background sequence extracted per locus. Must match
        the window the model was trained at.
-   * - ``out_window``
-     - 1000
-     - Not read.
    * - ``compile`` / ``compile_mode``
      - ``true`` / ``"max-autotune"``
      - As for ``evaluate``.
@@ -1007,9 +1004,9 @@ tables above), with these defaults changed:
        ``output_filename: ${name}.seqlets.bed``.
    * - ``marginalize``
      - ``model``, ``sequences``, ``motifs``, ``exclusion_lists``,
-       ``in_window``, ``out_window``, ``batch_size``, ``random_state``,
-       ``compile``, ``compile_mode``, ``device`` and ``verbose`` from
-       the top level; ``loci: ${negatives}``, the background loci;
+       ``in_window``, ``batch_size``, ``random_state``, ``compile``,
+       ``compile_mode``, ``device`` and ``verbose`` from the top level;
+       ``loci: ${negatives}``, the background loci;
        ``output_filename: ${name}_marginalize/``. Runs only when
        ``motifs`` is set.
 

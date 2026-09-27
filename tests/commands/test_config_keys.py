@@ -50,7 +50,6 @@ READERS = {
 # Declared keys no module reads today. Pinned so a new one fails the test.
 KNOWN_UNREAD = {
 	(C.SeqletsConfig, "verbose"),
-	(C.MarginalizeConfig, "out_window"),
 }
 
 

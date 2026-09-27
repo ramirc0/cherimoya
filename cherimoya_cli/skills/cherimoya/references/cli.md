@@ -86,7 +86,7 @@ Quote these; don't guess others. Read `cherimoya_cli/config.py` or the docs.
 
 Some declared keys are never read. Don't suggest them as fixes:
 
-- `seqlets.verbose` and `marginalize.out_window`.
+- `seqlets.verbose`.
 
 ## `min_total_steps`: an epoch is not a fixed amount of training
 

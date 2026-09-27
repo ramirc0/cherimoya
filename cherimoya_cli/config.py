@@ -231,7 +231,6 @@ class MarginalizeConfig:
 	random_state: Optional[int] = 0
 	batch_size: int = 512
 	in_window: int = 2114
-	out_window: int = 1000
 	compile: bool = True
 	compile_mode: str = "max-autotune"
 	device: str = "cuda"
@@ -373,8 +372,8 @@ class PipelineConfig:
 	marginalize: MarginalizeConfig = _step(MarginalizeConfig,
 		model="${model}", sequences="${sequences}", motifs="${motifs}",
 		loci="${negatives}", exclusion_lists="${exclusion_lists}",
-		in_window="${in_window}", out_window="${out_window}",
-		batch_size="${batch_size}", random_state="${random_state}",
+		in_window="${in_window}", batch_size="${batch_size}",
+		random_state="${random_state}",
 		compile="${compile}", compile_mode="${compile_mode}",
 		device="${device}", verbose="${verbose}",
 		output_filename="${name}_marginalize/")
