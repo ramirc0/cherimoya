@@ -200,3 +200,41 @@ def test_attribute_writes_arrays_seqlets_can_size_itself_from(tmp_path,
 
 	assert captured["ohe"].shape[-1] == 600
 	assert captured["attr"].shape == captured["ohe"].shape
+
+
+def test_seqlets_skip_the_loci_attribute_excluded(tmp_path):
+	"""An exclusion list drops loci in `attribute`, and `seqlets` has no
+	exclusion key of its own: the saved index mask carries the drop, so
+	the first attributed example maps to the first locus kept. Runs the
+	real `extract_loci` on a small genome."""
+
+	from cherimoya_cli.commands import attribute
+
+	rng = numpy.random.RandomState(0)
+	(tmp_path / "g.fa").write_text(">chr1\n{}\n".format(
+		"".join(rng.choice(list("ACGT"), 20000))))
+	pandas.DataFrame([["chr1", 3000, 4000], ["chr1", 12000, 13000]]).to_csv(
+		tmp_path / "loci.bed", sep="\t", header=False, index=False)
+	pandas.DataFrame([["chr1", 2500, 4500]]).to_csv(
+		tmp_path / "exclude.bed", sep="\t", header=False, index=False)
+
+	cfg = OmegaConf.structured(AttributeConfig(
+		sequences=str(tmp_path / "g.fa"), loci=str(tmp_path / "loci.bed"),
+		exclusion_lists=[str(tmp_path / "exclude.bed")], chroms=["chr1"],
+		model="m.torch", device="cpu", in_window=1000, attr_window=400,
+		ohe_filename=str(tmp_path / "a.ohe.npz"),
+		attr_filename=str(tmp_path / "a.attr.npz"),
+		idx_filename=str(tmp_path / "a.idx.npy"),
+	))
+
+	with mock.patch("cherimoya.Cherimoya") as model_cls, \
+			mock.patch("tangermeme.deep_lift_shap.deep_lift_shap",
+				side_effect=lambda model, X, **kwargs: torch.ones(X.shape)):
+		model_cls.load.return_value = mock.MagicMock(n_control_tracks=0,
+			signal_groups=[1])
+		attribute.run(cfg)
+
+	assert numpy.load(tmp_path / "a.idx.npy").tolist() == [False, True]
+
+	out = _run_seqlets(tmp_path, 0, 10)
+	assert out.iloc[0, 1] == 12500 - 200
