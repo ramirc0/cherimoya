@@ -21,6 +21,54 @@ INPUT_KEYS = {
 }
 
 
+def draw_random_state():
+	"""Draw a seed for a run whose `random_state` is null, and print it.
+
+	A null `random_state` means "pick one and tell me" rather than "stay
+	unseeded". The seed is printed whether or not `verbose` is set,
+	because it is the one part of a run that cannot be recovered
+	afterwards. Only rank 0 prints.
+
+	The ranks Lightning launches after the first read rank 0's draw from
+	`PL_GLOBAL_SEED`, which `seed_everything` sets before they start.
+	Rank 0 itself always draws, so a value left in the environment by an
+	earlier run in the same process is ignored. Under `srun` every rank
+	starts at once, so there is no draw to inherit, and each derives the
+	same seed from the job step instead.
+
+
+	Returns
+	-------
+	random_state: int
+		The drawn seed.
+	"""
+
+	import hashlib
+	import os
+
+	import numpy
+	from lightning.pytorch.utilities import rank_zero_only
+
+	say = rank_zero_only(print)
+
+	seed = None
+	if int(os.environ.get("LOCAL_RANK", 0)) > 0:
+		seed = os.environ.get("PL_GLOBAL_SEED")
+	elif int(os.environ.get("SLURM_NTASKS", 1)) > 1:
+		step = "{}.{}".format(os.environ.get("SLURM_JOB_ID"),
+			os.environ.get("SLURM_STEP_ID", 0))
+		seed = int(hashlib.sha256(step.encode()).hexdigest(), 16) % (2**31 - 1)
+		say("Derived random_state={0} from SLURM job step {1}; set "
+			"random_state={0} to repeat this run.".format(seed, step))
+
+	if seed is None:
+		seed = int(numpy.random.randint(0, 2**31 - 1))
+		say("Drew random_state={0}; set random_state={0} to repeat this "
+			"run.".format(seed))
+
+	return int(seed)
+
+
 def resolve_inputs(cfg, keys):
 	"""Make every local input path absolute and check that it exists.
 

@@ -55,24 +55,23 @@ def test_missing_key_error_names_the_null_fix(tmp_path, monkeypatch,
 	assert "null" in err
 
 
-def test_fit_yaml_records_a_drawn_seed(tmp_path, run_pipeline):
-	"""A null `random_state` is drawn by fit. The saved fit config must
-	hold the drawn seed, so rerunning it repeats the run."""
-
-	from unittest import mock
+def test_null_random_state_is_drawn_once_for_every_step(run_pipeline,
+		tmp_path, capsys):
+	"""A null seed means "draw one and print it". The pipeline draws it
+	before any step, so fit, attribute and marginalize share it. It used
+	to be drawn inside fit, which left attribute and marginalize
+	unseeded."""
 
 	from omegaconf import OmegaConf
 
-	def fake_fit(cfg):
-		cfg.random_state = 123
+	run_pipeline(random_state=None, motifs=str(tmp_path / "m.meme"))
 
-	with mock.patch("cherimoya_cli.commands.fit.run", fake_fit), \
-			mock.patch("cherimoya_cli.commands.attribute.run"), \
-			mock.patch("cherimoya_cli.commands.seqlets.run"), \
-			mock.patch("subprocess.run"):
-		run_pipeline(model=None, random_state=None, dry_run=False)
-
-	assert OmegaConf.load(tmp_path / "demo.fit.yaml").random_state == 123
+	seeds = {step: OmegaConf.load(tmp_path / "demo.{}.yaml".format(step))
+		.random_state for step in ("fit", "attribute", "marginalize")}
+	drawn = seeds["fit"]
+	assert isinstance(drawn, int)
+	assert seeds == dict.fromkeys(seeds, drawn)
+	assert "Drew random_state={}".format(drawn) in capsys.readouterr().out
 
 
 def test_a_multi_device_fit_runs_as_its_own_command(tmp_path,
