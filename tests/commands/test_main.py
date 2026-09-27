@@ -303,3 +303,22 @@ def test_install_skill_still_uses_argparse(tmp_path, monkeypatch):
 	args = run.call_args.args[0]
 	assert args.directory == str(tmp_path)
 	assert args.force is True
+
+
+@pytest.mark.parametrize("command", ["fit", "pipeline"])
+def test_job_is_named_after_the_command(command, tmp_path, monkeypatch):
+	"""Hydra's job name is what a SLURM launcher shows in `squeue`. It
+	used to fall back to the module name, `__main__`, for every command."""
+
+	from hydra.core.hydra_config import HydraConfig
+
+	names = []
+	monkeypatch.chdir(tmp_path)
+	with mock.patch("cherimoya_cli.config.missing_keys", return_value=()), \
+			mock.patch("cherimoya_cli.utils.resolve_inputs"), \
+			mock.patch("cherimoya_cli.commands.{}.run".format(command),
+				lambda cfg: names.append(HydraConfig.get().job.name)):
+		_main(monkeypatch, command)
+
+	assert names == ["cherimoya-" + command]
+	assert (tmp_path / ".hydra" / command / "config.yaml").exists()

@@ -3,8 +3,9 @@
 # into the working directory, as before, and keeps the composed config and
 # overrides under .hydra/<command>/. A multirun (-m) gives every job its own
 # directory, multirun/<date>/<time>/<job number>/, and runs the job there, so
-# jobs never overwrite each other's outputs. Cherimoya reports progress with
-# print, so Hydra leaves Python logging alone.
+# jobs never overwrite each other's outputs. The job name, which a SLURM
+# launcher shows in the queue, is cherimoya-<command>. Cherimoya reports
+# progress with print, so Hydra leaves Python logging alone.
 defaults:
   - override /hydra/job_logging: none
 
@@ -15,5 +16,6 @@ hydra:
     dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${hydra.job.num}
   job:
+    name: cherimoya-${hydra.job.config_name}
     chdir: true
   output_subdir: .hydra/${hydra.job.config_name}
