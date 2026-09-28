@@ -29,9 +29,16 @@ Override syntax:
   `--cfg` go before or after all of them, never between. `-p FILE` may go
   anywhere.
 
-JSON parameter files from earlier versions don't load, and there is no
-converter. Write the same keys as YAML and drop the `_parameters` suffix from
-the step sections (`fit_parameters` becomes `fit`).
+`-p` also reads the JSON parameter files earlier versions wrote, and an old
+file loads if every key is in the new schema. There is no converter. To
+convert a pipeline file by hand:
+
+- Rename each step section by dropping the `_parameters` suffix
+  (`fit_parameters` becomes `fit`), except that `seqlet_parameters` becomes
+  `seqlets`.
+- Delete every step key set to `null`. It meant "use the top-level value or
+  the default", which a step key now does when it is left out; a `null` now
+  overrides that.
 
 ## Step 1: the five required keys
 

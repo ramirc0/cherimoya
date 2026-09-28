@@ -35,7 +35,9 @@ cherimoya <command> [-p FILE] [key=value ...] [-m] [Hydra flags]
 - Quote list values: `'signals=[a.bw,b.bw]'`.
 - `-m` sweeps comma-separated values into separate jobs (see
   `references/cli-training-pipeline.md`).
-- JSON configs from earlier versions don't load. Rewrite them as YAML.
+- `-p` also reads the JSON configs earlier versions wrote, if every key is in
+  the new schema. A pipeline JSON needs converting first (see
+  `references/cli-training-pipeline.md`).
 
 `fit`, `evaluate`, `attribute`, `seqlets` and `marginalize` take `skip=true`
 to no-op the step. In `pipeline`, a top-level `skip=true` no-ops the whole run

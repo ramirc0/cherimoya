@@ -44,9 +44,16 @@ starts:
 
    Key 'n_filter' not in 'FitConfig'
 
-JSON parameter files from earlier versions of Cherimoya no longer load.
-Write the same keys as YAML, dropping the ``_parameters`` suffix from
-the pipeline's step sections (``fit_parameters`` becomes ``fit``).
+``-p`` also reads the JSON parameter files that earlier versions of
+Cherimoya wrote, since they parse as YAML, and an old file loads if every
+key is in the new schema. A pipeline file needs converting first:
+
+* Rename each step section by dropping the ``_parameters`` suffix
+  (``fit_parameters`` becomes ``fit``), except that ``seqlet_parameters``
+  becomes ``seqlets``.
+* Delete every step key set to ``null``. It meant "use the top-level
+  value or the default", which a step key now does when it is left out;
+  a ``null`` now overrides that.
 
 Override syntax
 ~~~~~~~~~~~~~~~

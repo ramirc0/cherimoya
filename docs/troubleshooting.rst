@@ -253,8 +253,9 @@ The first lists every required key you did not give; give each one, or
 set it to ``null`` in a pipeline if an earlier step produces it. The
 second means a key in the ``-p`` file or an override is misspelled or
 belongs to another command. ``cherimoya <command> --help`` lists the
-valid keys. JSON configs from earlier versions do not load; see
-:doc:`cli`.
+valid keys. A JSON config from an earlier version fails this way when it
+sets a key the new schema lacks, such as a pipeline's
+``fit_parameters``. :doc:`cli` lists the conversion steps.
 
 
 MACS3 hangs or returns no peaks

@@ -115,8 +115,9 @@ and marginalization run only when `motifs` is set. See
 `references/cli-training-pipeline.md` for the per-step table and what gates
 each step.
 
-Configs from older Cherimoya versions were JSON. They no longer load, and
-there is no converter; rewrite them as YAML.
+Configs from older Cherimoya versions were JSON. `-p` still reads one if
+every key is in the new schema, but a pipeline JSON needs converting by
+hand first. `references/cli-training-pipeline.md` lists the steps.
 
 ## Reference map — open the one that fits the task
 
