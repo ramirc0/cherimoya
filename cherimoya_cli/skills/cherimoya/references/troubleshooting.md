@@ -167,12 +167,15 @@ spelling instead. The second lists every
 required key with no value. In a pipeline, set `loci` or `negatives` to `null`
 to have the pipeline produce them.
 
+A JSON config from an earlier version fails the first way when it sets a key
+the new schema lacks, such as a pipeline's `fit_parameters`.
+`references/cli-training-pipeline.md` lists the conversion steps.
+
 ## "FileNotFoundError: The following inputs are missing"
 
 Every local input path is checked before running, relative to the directory
 the command started in. Fix the path, or, if the pipeline is supposed to make
-the file, set that key to `null`. Old JSON configs don't load; rewrite them as
-YAML.
+the file, set that key to `null`.
 
 ## "Cherimoya.load rejects a checkpoint" (`KeyError: 'config'` or `UnpicklingError: Weights only load failed`)
 

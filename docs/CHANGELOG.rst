@@ -7,17 +7,22 @@ Unreleased
 Configuration (**breaking**)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-* **The CLI is configured with Hydra, and JSON configs are gone.** Every
+* **The CLI is configured with Hydra, and YAML replaces JSON.** Every
   command except ``install-skill`` composes its config from a typed schema
   in ``cherimoya_cli/config.py``, which replaces ``defaults.py``. Keys are
   set as overrides (``cherimoya fit name=ctcf 'signals=[ctcf.bw]'``), from
-  a YAML file with ``-p``, or both; overrides win over the file. **A JSON
-  passed to** ``-p`` **no longer works.** A pipeline's
-  ``<step>_parameters`` blocks become step nodes (``fit``, ``attribute``,
-  ``seqlets``, ``marginalize``, ``preprocessing``, ``annotation``,
-  ``modisco_motifs``, ``modisco_report``, and the new
-  ``negative_sampling``), so ``"fit_parameters": {"batch_size": 32}``
-  is now ``fit.batch_size=32``.
+  a YAML file with ``-p``, or both; overrides win over the file. ``-p``
+  parses its file as YAML, which also reads the JSON that earlier versions
+  wrote, so an old JSON config loads only if every key is in the new
+  schema. **An old pipeline JSON fails** on its ``<step>_parameters``
+  blocks, which become step nodes (``fit``, ``attribute``, ``seqlets``,
+  ``marginalize``, ``preprocessing``, ``annotation``, ``modisco_motifs``,
+  ``modisco_report``, and the new ``negative_sampling``), so
+  ``"fit_parameters": {"batch_size": 32}`` is now ``fit.batch_size=32``.
+  Converting an old pipeline file also means deleting its ``null`` step
+  keys. A ``null`` there meant the top-level value or the default, which
+  a step key now takes when it is left out; a ``null`` now overrides
+  that.
 
 * **An unknown key is now an error.** The old merge passed any key it did
   not recognise through to the step, which ignored it, so a typo silently

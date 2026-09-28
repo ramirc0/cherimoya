@@ -207,6 +207,45 @@ def test_cfg_job_prints_a_template_for_p(tmp_path, monkeypatch, capsys):
 	assert cfg.loci is None
 
 
+def test_p_reads_the_json_earlier_versions_wrote(tmp_path, monkeypatch,
+		seqlets_inputs):
+	"""`-p` parses its file as YAML, which reads the indented JSON that
+	earlier versions wrote, so an old config still composes when every
+	key is in the schema."""
+
+	import json
+
+	path = tmp_path / "run.seqlets.json"
+	path.write_text(json.dumps({"loci": "x.bed", "ohe_filename": "a.ohe.npz",
+		"attr_filename": "a.attr.npz", "idx_filename": "a.idx.npy",
+		"threshold": 0.2}, sort_keys=True, indent=4))
+
+	_main(monkeypatch, "seqlets", "-p", str(path))
+
+	assert seqlets_inputs.call_args.args[0].threshold == 0.2
+
+
+def test_an_old_pipeline_json_fails_on_its_parameters_blocks(tmp_path,
+		monkeypatch, capsys):
+	"""A pipeline JSON from an earlier version keeps its steps in
+	`<step>_parameters` blocks, which are step nodes now."""
+
+	import json
+
+	path = tmp_path / "run.json"
+	path.write_text(json.dumps({"name": "demo",
+		"fit_parameters": {"batch_size": 32}}, indent=4))
+	monkeypatch.chdir(tmp_path)
+
+	with mock.patch("cherimoya_cli.commands.pipeline.run") as run, \
+			pytest.raises(SystemExit):
+		_main(monkeypatch, "pipeline", "-p", str(path))
+
+	assert "Key 'fit_parameters' not in 'PipelineConfig'" in (
+		capsys.readouterr().err)
+	run.assert_not_called()
+
+
 def test_multirun_jobs_get_their_own_directories(tmp_path, monkeypatch):
 	"""Each job of a sweep runs in its own directory, so two jobs never
 	write the same file, and relative inputs still point at the launch
