@@ -63,7 +63,7 @@ Configuration (**breaking**)
   random_state=0,1,2``. Each job runs in its own directory,
   ``multirun/<date>/<time>/<job number>/``, so jobs never overwrite
   each other's outputs. The new ``slurm`` extra
-  (``pip install cherimoya[slurm]``) installs
+  (``pip install "cherimoya[slurm]"``) installs
   ``hydra-submitit-launcher``, and ``hydra/launcher=submitit_slurm``
   submits each job to SLURM. The job name is ``cherimoya-<command>``.
 
