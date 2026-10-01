@@ -3,6 +3,7 @@
 
 import argparse
 import importlib
+import os
 import sys
 from importlib.metadata import version, PackageNotFoundError
 
@@ -71,8 +72,10 @@ def _setup_parsers() -> argparse.ArgumentParser:
 	return parser
 
 
-def _task(command):
+def _task(command, rerun):
 	def task(cfg):
+		from hydra.core.hydra_config import HydraConfig
+
 		from .config import missing_keys
 		from .utils import INPUT_KEYS, resolve_inputs
 
@@ -83,6 +86,12 @@ def _task(command):
 				", ".join(sorted(missing))))
 
 		resolve_inputs(cfg, INPUT_KEYS[command])
+
+		# With more than one device, Lightning starts every rank after the
+		# first by re-running `sys.argv`, so it must name this job alone:
+		# the file and this job's overrides, not the whole sweep.
+		sys.argv = rerun + [override for override in
+			HydraConfig.get().overrides.task if override != "+run=user"]
 		importlib.import_module(".commands." + command, __package__).run(cfg)
 
 	return task
@@ -100,8 +109,10 @@ def _dispatch(command, argv):
 
 	from . import config  # noqa: F401 -- registers the schemas
 
+	rerun = [sys.argv[0], command]
 	if "-p" in argv:
 		i = argv.index("-p")
+		rerun += ["-p", os.path.abspath(argv[i + 1])]
 		ConfigStore.instance().store(group="run", name="user",
 			node=OmegaConf.load(argv[i + 1]), package="_global_")
 		argv = argv[:i] + argv[i + 2:]
@@ -112,7 +123,7 @@ def _dispatch(command, argv):
 
 	sys.argv = ["cherimoya " + command] + argv
 	hydra.main(version_base="1.3", config_path="pkg://cherimoya_cli.conf",
-		config_name=command)(_task(command))()
+		config_name=command)(_task(command, rerun))()
 
 
 def main():

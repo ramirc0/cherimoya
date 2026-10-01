@@ -247,6 +247,45 @@ def test_multirun_jobs_get_their_own_directories(tmp_path, monkeypatch):
 	assert not (tmp_path / "demo.torch").exists()
 
 
+def test_a_launched_rank_reruns_its_own_job(tmp_path, monkeypatch):
+	"""With more than one device, Lightning starts each rank after the
+	first by re-running the command line, with Hydra's run settings
+	appended. That command must compose the job that launched it: the
+	`-p` file and this job's overrides, not the whole sweep."""
+
+	from lightning.fabric.strategies.launchers import subprocess_script
+	from omegaconf import OmegaConf
+
+	for name in ("g.fa", "p.bed", "n.bed", "s.bw"):
+		(tmp_path / name).write_text("")
+	monkeypatch.chdir(tmp_path)
+
+	path = _yaml(tmp_path, "name: demo\nsequences: g.fa\nloci: [p.bed]\n"
+		"negatives: [n.bed]\nsignals: [s.bw]\n")
+
+	jobs = []
+
+	def fake_fit(cfg):
+		command, cwd = subprocess_script._hydra_subprocess_cmd(local_rank=1)
+		jobs.append((command, cwd, OmegaConf.to_container(cfg)))
+
+	with mock.patch("cherimoya_cli.commands.fit.run", fake_fit):
+		_main(monkeypatch, "fit", "-p", "run.yaml", "-m", "random_state=0,1")
+
+	assert len(jobs) == 2
+	for command, cwd, cfg in jobs:
+		assert cwd == str(tmp_path)
+		argv = command[command.index("fit"):]
+		assert "-m" not in argv
+		assert argv[argv.index("-p") + 1] == path
+
+		with mock.patch("cherimoya_cli.commands.fit.run") as run:
+			_main(monkeypatch, *argv)
+
+		run.assert_called_once()
+		assert OmegaConf.to_container(run.call_args.args[0]) == cfg
+
+
 def test_version(monkeypatch, capsys):
 	from cherimoya_cli.__main__ import __version__
 
