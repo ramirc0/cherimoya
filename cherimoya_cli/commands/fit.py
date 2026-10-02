@@ -353,6 +353,7 @@ def run(cfg):
 	accelerator = {"cuda": "gpu"}.get(parameters["device"],
 		parameters["device"])
 
+	environ = dict(os.environ)
 	trainer = fit(
 		model,
 		training_data,
@@ -380,6 +381,15 @@ def run(cfg):
 		lw_momentum=parameters["lw_momentum"],
 		loss_weights=parameters["loss_weights"],
 	)
+
+	# A sweep runs its jobs one after another in this process. Lightning
+	# keeps a multi-device job's process group and the rank variables it
+	# set, so the next job would start no ranks of its own and reach this
+	# job's exited ones instead.
+	if torch.distributed.is_available() and torch.distributed.is_initialized():
+		torch.distributed.destroy_process_group()
+		os.environ.clear()
+		os.environ.update(environ)
 
 	if not trainer.is_global_zero:
 		return

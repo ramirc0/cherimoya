@@ -442,9 +442,9 @@ computed over the whole validation set.
 
 Lightning starts every rank after the first by re-running the current
 command, so everything in ``cherimoya fit`` before training runs once
-per rank; only rank 0 prints and runs the evaluate step. With
-``random_state`` set to ``null``, the ranks Lightning launches use the
-seed rank 0 drew. In ``cherimoya pipeline``, when ``fit.devices`` is
+per rank; only rank 0 prints and runs the evaluate step. In a sweep,
+each job's ranks rerun that job alone. With ``random_state`` set to
+``null``, the ranks Lightning launches use the seed rank 0 drew. In ``cherimoya pipeline``, when ``fit.devices`` is
 not 1 the fit step runs as a separate
 ``python -m cherimoya_cli fit -p <name>.fit.yaml`` process, so that the
 re-run command is the fit rather than the whole pipeline.

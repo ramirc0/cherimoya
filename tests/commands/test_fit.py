@@ -609,9 +609,11 @@ def test_fit_banner_names_the_loss_balancing_in_force(fit_cfg, capsys,
 
 # --------- the evaluate step ----------------------------------------------
 
-def _run_fit_evaluations(cfg, tmp_path, monkeypatch):
+def _run_fit_evaluations(cfg, tmp_path, monkeypatch, train=None):
 	"""Run `fit.run` through its evaluate step with training and data
-	loading faked, and return the evaluate configs it passed on, in order."""
+	loading faked, and return the evaluate configs it passed on, in order.
+	`train`, if given, is called in place of training and returns
+	`mock.DEFAULT` for the faked trainer."""
 
 	import types
 
@@ -629,12 +631,46 @@ def _run_fit_evaluations(cfg, tmp_path, monkeypatch):
 			mock.patch("tangermeme.io._interleave_loci", return_value=[None]), \
 			mock.patch("tangermeme.io.extract_loci",
 				side_effect=fake_extract_loci), \
-			mock.patch("cherimoya.training.fit",
+			mock.patch("cherimoya.training.fit", side_effect=train,
 				return_value=types.SimpleNamespace(is_global_zero=True)), \
 			mock.patch("cherimoya_cli.commands.evaluate.run") as evaluate:
 		fit_cmd.run(cfg)
 
 	return [call.args[0] for call in evaluate.call_args_list]
+
+
+def test_fit_leaves_no_ranks_behind_for_the_next_job(fit_cfg, tmp_path,
+	monkeypatch):
+	"""A sweep runs its jobs one after another in one process. Lightning
+	keeps a multi-device job's process group and the rank variables it
+	set, so the next job would start no ranks of its own and reach this
+	job's exited ones instead."""
+
+	import os
+
+	import torch.distributed as dist
+
+	monkeypatch.delenv("LOCAL_RANK", raising=False)
+	entered = []
+
+	def train(*args, **kwargs):
+		entered.append(("LOCAL_RANK" in os.environ, dist.is_initialized()))
+		os.environ.update(LOCAL_RANK="0", WORLD_SIZE="1")
+		# Lightning keeps a process group that is already there.
+		if not dist.is_initialized():
+			dist.init_process_group("gloo", rank=0, world_size=1,
+				init_method=(tmp_path / str(len(entered))).as_uri())
+		return mock.DEFAULT
+
+	with mock.patch.dict(os.environ):
+		try:
+			for _ in range(2):
+				_run_fit_evaluations(fit_cfg, tmp_path, monkeypatch, train)
+		finally:
+			if dist.is_initialized():
+				dist.destroy_process_group()
+
+	assert entered == [(False, False), (False, False)]
 
 
 def test_fit_evaluates_the_validation_and_test_chromosomes(fit_cfg, tmp_path,
