@@ -41,7 +41,7 @@ class _FakeLoader(list):
 	dataset = _FakeDataset()
 
 
-def _run_capturing_training_fit(cfg, n_on_chroms=1):
+def _run_capturing_training_fit(cfg, n_on_chroms=1, valid_kept=None):
 	"""Run `fit.run` up to the training call and return its arguments.
 
 	Data loading is faked and `cherimoya.training.fit` raises once it has
@@ -66,11 +66,17 @@ def _run_capturing_training_fit(cfg, n_on_chroms=1):
 		captured['peak_generator'] = kwargs
 		return _FakeLoader([None] * 4)
 
-	# One validation peak, and two validation negatives.
+	# One validation peak, or those `valid_kept` keeps, and two validation
+	# negatives.
 	def fake_extract_loci(**kwargs):
-		captured.setdefault('extract', {})[kwargs['loci']] = kwargs
-		n = 2 if kwargs['loci'] == 'fake_negatives.bed' else 1
-		return torch.zeros(n, 4, 16), torch.zeros(n, 1, 8)
+		captured.setdefault('extract', {})[str(kwargs['loci'])] = kwargs
+		negatives = str(kwargs['loci']).endswith('negatives.bed')
+		kept = torch.ones(2 if negatives else 1, dtype=torch.bool)
+		if valid_kept is not None and not negatives:
+			kept = torch.tensor(valid_kept)
+		n = int(kept.sum())
+		data = (torch.zeros(n, 4, 16), torch.zeros(n, 1, 8))
+		return (*data, kept) if kwargs.get('return_mask') else data
 
 	with mock.patch("cherimoya.io.PeakGenerator",
 				side_effect=fake_peak_generator), \
@@ -768,3 +774,30 @@ def test_fit_validates_without_negatives_on_the_validation_chromosomes(
 	assert len(X_valid) == 1
 	assert captured['labels_valid'] is None
 	assert 'fake_negatives.bed' not in captured['extract']
+
+
+def test_fit_follows_the_loci_masks_into_training_and_validation(tmp_path):
+	"""The masks go to PeakGenerator for training. For validation, the rows
+	on the validation chromosomes that extract_loci keeps get their masks,
+	and every negative is scored by every group."""
+
+	bed = tmp_path / "peaks.bed"
+	bed.write_text("chr8\t0\t10\nchr2\t0\t10\nchr8\t20\t30\n"
+		"chr20\t0\t10\n")
+	masks = tmp_path / "peaks.mask.tsv"
+	masks.write_text("a\tb\n1\t0\n0\t0\n0\t1\n1\t1\n")
+	cfg = _fit_config(loci=[str(bed)], loci_masks=[str(masks)],
+		signals=['a.bw', 'b.bw'])
+
+	captured = _run_capturing_training_fit(cfg, valid_kept=[True, False,
+		True])
+
+	assert captured['peak_generator']['peak_masks'] == [str(masks)]
+	assert captured['masks_valid'].tolist() == [[True, False], [True, True],
+		[True, True], [True, True]]
+
+
+def test_fit_without_loci_masks_scores_every_group_everywhere(fit_cfg):
+	captured = _run_capturing_training_fit(fit_cfg)
+	assert captured['peak_generator']['peak_masks'] is None
+	assert captured['masks_valid'] is None

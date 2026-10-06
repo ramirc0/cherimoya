@@ -114,7 +114,8 @@ def run(cfg):
 	from lightning.pytorch.utilities import rank_zero_only
 
 	from cherimoya import Cherimoya
-	from cherimoya.io import PeakGenerator, normalize_signal_groups
+	from cherimoya.io import PeakGenerator, interleave_masks
+	from cherimoya.io import normalize_signal_groups
 	from cherimoya.training import fit
 	from omegaconf import OmegaConf
 
@@ -204,6 +205,7 @@ def run(cfg):
 		verbose=parameters["verbose"],
 		signal_groups=signal_groups,
 		control_groups=control_groups,
+		peak_masks=parameters["loci_masks"],
 	).dataset
 
 	# Centered as the training peaks are; negatives have no summit column.
@@ -219,8 +221,17 @@ def run(cfg):
 		summits=parameters["summits"],
 		exclusion_lists=parameters["exclusion_lists"],
 		ignore=list("QWERYUIOPSDFHJKLZXVBNM"),
+		return_mask=parameters["loci_masks"] is not None,
 		verbose=parameters["verbose"],
 	)
+
+	# The validation peaks' masks, for the rows extract_loci kept.
+	valid_masks = None
+	if parameters["loci_masks"] is not None:
+		*valid_data, valid_kept = valid_data
+		valid_masks = torch.from_numpy(interleave_masks(parameters["loci"],
+			parameters["loci_masks"], parameters["validation_chroms"])[
+			valid_kept.numpy()])
 
 	# Every negative on the validation chromosomes joins the validation
 	# set, labeled 0, for the measures that separate peaks from negatives.
@@ -246,6 +257,9 @@ def run(cfg):
 		valid_data = [torch.cat(pair) for pair in zip(valid_data, negative_data)]
 		valid_labels = torch.cat([torch.ones(n_valid_peaks),
 			torch.zeros(n_valid_negatives)])
+		if valid_masks is not None:
+			valid_masks = torch.cat([valid_masks, torch.ones(n_valid_negatives,
+				valid_masks.shape[1], dtype=torch.bool)])
 
 	if parameters["verbose"]:
 		say("\nTraining Set Peaks: ", training_data.peak_sequences.shape[0])
@@ -254,6 +268,9 @@ def run(cfg):
 		say("Validation Set Negatives: ", n_valid_negatives, "\n")
 		say("Negative Ratio: 1:{:4.4} pos:neg\n".format(
 			parameters["negative_ratio"]))
+		if valid_masks is not None:
+			say("Share of the training peaks each signal group scores: ",
+				training_data.peak_masks.mean(axis=0).round(3).tolist(), "\n")
 
 	###
 
@@ -333,6 +350,7 @@ def run(cfg):
 		valid_signals,
 		X_ctl_valid=valid_controls,
 		labels_valid=valid_labels,
+		masks_valid=valid_masks,
 		max_epochs=max_epochs,
 		early_stopping=parameters["early_stopping"],
 		dtype=parameters["dtype"],
