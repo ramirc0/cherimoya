@@ -987,18 +987,31 @@ def test_mask_weights_average_each_group_over_its_global_examples(world_size):
 	is the mean over the group's own examples. A group with none gets
 	weights of zero."""
 
-	training_data, X_valid, y_valid, _ = _data([1, 1, 1], 4)
+	plain, X_valid, y_valid, _ = _data([1, 1, 1], 4)
+	module = CherimoyaModule(_model([1, 1, 1]), plain, X_valid, y_valid)
+	assert module._weights(torch.tensor([1, 0, 1, 1])) is None
+
+	training_data, _, _, _ = _data([1, 1, 1], 4,
+		peak_masks=numpy.ones((12, 3), dtype=bool))
 	module = CherimoyaModule(_model([1, 1, 1]), training_data, X_valid,
 		y_valid)
 	module._trainer = _fake_trainer(world_size)
-	mask = torch.tensor([[1, 1, 0], [1, 0, 0], [1, 0, 0], [0, 0, 0]],
-		dtype=torch.bool)
+	label = torch.tensor([[1, 1, 0], [1, 0, 0], [0.5, 0.25, 0], [0, 0, 0]])
 	other = torch.tensor([0.5, 0.0, 0.0])
 	module.all_gather = lambda share: torch.stack([share, other])
 
-	assert module._weights(torch.tensor([1, 0, 1, 1])) is None
-	share = (mask.float().mean(dim=0) if world_size == 1
-		else (mask.float().mean(dim=0) + other) / 2)
-	expected = mask / torch.where(share > 0, share, 1.0)
-	assert torch.equal(module._weights(mask), expected)
-	assert (module._weights(mask)[:, 2] == 0).all()
+	share = (label.mean(dim=0) if world_size == 1
+		else (label.mean(dim=0) + other) / 2)
+	expected = label / torch.where(share > 0, share, 1.0)
+	assert torch.equal(module._weights(label), expected)
+	assert (module._weights(label)[:, 2] == 0).all()
+
+
+def test_ranking_is_nan_when_a_group_s_examples_hold_one_class():
+	from sklearn.metrics import roc_auc_score
+	from cherimoya.training import _ranking
+
+	scores = numpy.array([0.1, 0.9, 0.4])
+	assert numpy.isnan(_ranking(roc_auc_score, numpy.ones(3, bool), scores))
+	assert _ranking(roc_auc_score, numpy.array([False, True, False]),
+		scores) == 1.0
