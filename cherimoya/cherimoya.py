@@ -90,7 +90,7 @@ class EMA:
 		self._backup = {}
 
 
-def _group_depths(y, signal_groups, reduce=None):
+def _group_depths(y, signal_groups, reduce=None, weights=None):
 	"""Batch-mean observed counts for each signal group.
 
 	The profile MNLL is a sum of per-read log-likelihoods, so it scales with
@@ -116,6 +116,12 @@ def _group_depths(y, signal_groups, reduce=None):
 		training passes one that averages them across devices, so that the
 		depths are those of the whole global batch. Default is None.
 
+	weights: torch.tensor or None, shape=(batch_size, n_groups), optional
+		Per-example, per-group weights, the ones the losses are weighted
+		with (see :func:`cherimoya.losses._mixture_loss`). Each group's
+		depth is then ``(counts * weights).mean()``, so an example left out
+		of a group's loss is left out of its depth. Default is None.
+
 
 	Returns
 	-------
@@ -125,8 +131,11 @@ def _group_depths(y, signal_groups, reduce=None):
 	"""
 
 	depths, lo = [], 0
-	for width in signal_groups:
-		depths.append(y[:, lo:lo + width].sum(dim=(1, 2)).float().mean())
+	for i, width in enumerate(signal_groups):
+		counts = y[:, lo:lo + width].sum(dim=(1, 2)).float()
+		if weights is not None:
+			counts = counts * weights[:, i]
+		depths.append(counts.mean())
 		lo += width
 
 	depths = torch.stack(depths)

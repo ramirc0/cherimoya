@@ -255,3 +255,74 @@ def test_mixture_loss_signal_groups_size_mismatch_raises():
 	# sum(signal_groups) must equal y.shape[1] (=3).
 	with pytest.raises(ValueError, match="sum.signal_groups"):
 		_mixture_loss(y, logits, logcounts, signal_groups=[1, 1])
+
+
+# --------- Per-group weights -----------------------------------------------
+
+def test_mixture_loss_unit_weights_match_no_weights_bitwise():
+	y, logits, logcounts = _toy_inputs(n=6, n_outputs=3, n_count_outputs=2)
+	weights = torch.ones(6, 2)
+	expected = _mixture_loss(y, logits, logcounts, signal_groups=[1, 2])
+	got = _mixture_loss(y, logits, logcounts, signal_groups=[1, 2],
+		weights=weights)
+	for e, g in zip(expected, got):
+		assert torch.equal(e, g)
+
+
+@pytest.mark.parametrize("signal_groups,n_outputs", [(None, 2), ([1, 1], 2),
+	([1, 2], 3)])
+def test_mixture_loss_mask_weights_give_each_groups_subset_mean(
+	signal_groups, n_outputs):
+	"""Weights of 0 and n / n_kept leave each group's loss the mean over
+	its kept examples alone."""
+
+	y, logits, logcounts = _toy_inputs(n=6, n_outputs=n_outputs,
+		n_count_outputs=2)
+	mask = torch.tensor([[1, 0], [1, 1], [0, 1], [1, 0], [0, 1], [1, 1]],
+		dtype=torch.bool)
+	weights = mask / mask.float().mean(dim=0)
+	profile_loss, count_loss = _mixture_loss(y, logits, logcounts,
+		signal_groups=signal_groups, weights=weights)
+
+	groups = signal_groups or [1, 1]
+	for g, lo in enumerate([0, groups[0]]):
+		rows = mask[:, g]
+		width = groups[g]
+		subset = _mixture_loss(y[rows][:, lo:lo+width],
+			logits[rows][:, lo:lo+width], logcounts[rows][:, g:g+1],
+			signal_groups=None if signal_groups is None else [width])
+		assert torch.allclose(profile_loss[g], subset[0][0], atol=1e-5)
+		assert torch.allclose(count_loss[g], subset[1][0], atol=1e-5)
+
+
+def test_mixture_loss_zero_weight_group_is_zero_and_gets_no_gradient():
+	y, logits, logcounts = _toy_inputs(n=4, n_outputs=2, n_count_outputs=2)
+	logits = logits.detach().requires_grad_(True)
+	logcounts = logcounts.detach().requires_grad_(True)
+	weights = torch.tensor([[2.0, 0.0], [0.0, 0.0], [2.0, 0.0], [0.0, 0.0]])
+	profile_loss, count_loss = _mixture_loss(y, logits, logcounts,
+		weights=weights)
+	assert profile_loss[1] == 0 and count_loss[1] == 0
+	(profile_loss.sum() + count_loss.sum()).backward()
+	assert torch.isfinite(logits.grad).all()
+	assert (logits.grad[:, 1] == 0).all() and (logcounts.grad[:, 1] == 0).all()
+	assert (logits.grad[[1, 3], 0] == 0).all()
+
+
+def test_mixture_loss_weights_follow_the_labels_filter_for_the_profile():
+	y, logits, logcounts = _toy_inputs(n=4)
+	labels = torch.tensor([1, 0, 1, 0])
+	weights = torch.tensor([[2.0], [1.0], [0.0], [1.0]])
+	profile_loss, count_loss = _mixture_loss(y, logits, logcounts,
+		labels=labels, weights=weights)
+	only_first, _ = _mixture_loss(y[:1], logits[:1], logcounts[:1])
+	assert torch.allclose(profile_loss, only_first, atol=1e-5)
+	sq_err = (torch.log(y.sum(dim=-1) + 1) - logcounts) ** 2
+	assert torch.allclose(count_loss, (sq_err * weights).mean(dim=0))
+
+
+def test_mixture_loss_rejects_weights_of_the_wrong_shape():
+	y, logits, logcounts = _toy_inputs(n=4, n_outputs=3, n_count_outputs=2)
+	with pytest.raises(ValueError, match="weights"):
+		_mixture_loss(y, logits, logcounts, signal_groups=[1, 2],
+			weights=torch.ones(4, 3))
