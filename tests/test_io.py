@@ -1187,31 +1187,32 @@ def test_masks_replace_the_peak_flag_and_follow_the_source_peak():
 		peak_masks=peak_masks, reverse_complement=True)
 	for epoch in range(3):
 		for idx in range(len(sampler)):
-			X, y, mask = sampler[(epoch, idx)]
-			assert mask.dtype == torch.bool and mask.shape == (2,)
+			X, y, weights = sampler[(epoch, idx)]
+			assert weights.dtype == torch.float32 and weights.shape == (2,)
 			peak = _peak_index(X if not sampler._rc_flags[idx]
 				else torch.flip(X, [0, 1]))
 			if peak is not None:
-				assert mask.tolist() == peak_masks[peak].tolist()
+				assert weights.tolist() == peak_masks[peak].tolist()
 
 
-def test_masks_score_negatives_at_each_groups_peak_share():
-	n_peaks = 200
-	peak_masks = numpy.zeros((n_peaks, 3), dtype=bool)
+def test_negatives_carry_each_groups_share_of_the_peaks():
+	"""Weighted by its share, each group weighs `negative_ratio` negatives
+	per own peak in every epoch."""
+
+	peak_masks = numpy.zeros((8, 3), dtype=bool)
 	peak_masks[:, 0] = True
-	peak_masks[:50, 1] = True
-	sampler = _make_sampler(n_peaks=n_peaks, n_negs=50, negative_ratio=1.0,
+	peak_masks[:2, 1] = True
+	sampler = _make_sampler(n_peaks=8, n_negs=8, negative_ratio=1.0,
 		max_jitter=0, peak_masks=peak_masks)
 
-	drawn = []
-	for epoch in range(20):
-		for idx in range(len(sampler)):
-			X, _, mask = sampler[(epoch, idx)]
-			if _peak_index(X) is None:
-				drawn.append(mask.numpy())
-	rate = numpy.mean(drawn, axis=0)
-	assert rate[0] == 1 and rate[2] == 0
-	assert abs(rate[1] - 0.25) < 0.02
+	total = torch.zeros(3)
+	for idx in range(len(sampler)):
+		X, _, weights = sampler[(0, idx)]
+		if _peak_index(X) is None:
+			assert weights.tolist() == [1.0, 0.25, 0.0]
+			total += weights
+	assert torch.equal(total, torch.tensor(peak_masks.sum(axis=0) * 1.0,
+		dtype=torch.float32))
 
 
 def test_masks_leave_every_other_draw_unchanged():
@@ -1221,17 +1222,17 @@ def test_masks_leave_every_other_draw_unchanged():
 		peak_masks=peak_masks)
 	for epoch in range(3):
 		for idx in range(len(plain)):
-			(X, y, label), (X_m, y_m, mask) = (plain[(epoch, idx)],
+			(X, y, label), (X_m, y_m, weights) = (plain[(epoch, idx)],
 				masked[(epoch, idx)])
 			assert torch.equal(X, X_m) and torch.equal(y, y_m)
-			assert mask.all()
+			assert (weights == 1).all()
 
 
 def test_masks_with_controls_keep_the_tuple_length():
 	sampler = _make_sampler(controls=True,
 		peak_masks=numpy.ones((8, 1), dtype=bool))
-	X, X_ctl, y, mask = sampler[0]
-	assert mask.shape == (1,)
+	X, X_ctl, y, weights = sampler[0]
+	assert weights.shape == (1,)
 
 
 def test_num_workers_does_not_change_the_masks():
@@ -1267,7 +1268,7 @@ def _write_loci_and_masks(directory, name, rows):
 
 
 def _mask_of(start):
-	return int(start % 20 == 0), int(start % 30 == 0)
+	return int((start // 10) % 2 == 0), int((start // 10) % 3 != 0)
 
 
 def _filtering_extract_loci(loci, chroms, signals, in_window, out_window,
@@ -1306,7 +1307,10 @@ def test_peak_generator_aligns_masks_with_the_loci_it_keeps(tmp_path):
 
 	sampler = loader.dataset
 	starts = sampler.peak_sequences[:, 0, 0].astype(int)
-	assert 120 not in starts and 140 not in starts and 5 not in starts
+	# Dropped by extract_loci (140), off the chromosomes (5), an outlier in
+	# both of its groups (120), and in neither group's set (30).
+	for dropped in (140, 5, 120, 30):
+		assert dropped not in starts
 	assert len(starts) == sampler.n_peaks == len(sampler.peak_masks)
 	assert sampler.peak_masks.tolist() == [list(map(bool, _mask_of(s)))
 		for s in starts]
@@ -1331,3 +1335,37 @@ def test_peak_generator_rejects_masks_with_the_wrong_rows(tmp_path):
 		with pytest.raises(ValueError, match="rows"):
 			PeakGenerator(**_minimal_peakgen_kwargs(peaks=bed,
 				peak_masks=tsv, negatives=None, signals=["a.bw", "b.bw"]))
+
+
+def test_peak_generator_takes_each_groups_outlier_threshold_over_its_peaks():
+	"""A group that owns a tenth of the peaks would, over all of them, have
+	its threshold at its own 90th percentile and lose its strongest peak.
+	Over its own peaks the threshold is that of a model of the group
+	alone."""
+
+	N = 100
+	counts = torch.zeros(N)
+	counts[:10] = 2.0 ** torch.arange(10)
+	masks = numpy.zeros((N, 2), dtype=bool)
+	masks[:10, 0] = True
+	masks[:, 1] = True
+
+	def fake(loci, sequences, signals, in_signals, chroms, in_window,
+			out_window, max_jitter, min_counts, max_counts, summits,
+			exclusion_lists, ignore, return_mask, verbose):
+		y = torch.ones(N, 2, out_window)
+		y[:, 0] = counts[:, None] / out_window
+		return (torch.zeros(N, 4, in_window), y,
+			torch.ones(N, dtype=torch.bool))
+
+	frame = __import__("pandas").DataFrame({"chrom": ["chr1"] * N,
+		"start": range(N), "end": range(1, N + 1)})
+	with _patch_extract_loci(fake):
+		unmasked = PeakGenerator(**_minimal_peakgen_kwargs(peaks=frame,
+			signals=["a.bw", "b.bw"]))
+		masked = PeakGenerator(**_minimal_peakgen_kwargs(peaks=frame,
+			signals=["a.bw", "b.bw"], peak_masks=masks))
+
+	assert unmasked.dataset.n_peaks == N - 1
+	assert masked.dataset.n_peaks == N
+	assert masked.dataset.peak_masks[:10, 0].all()
