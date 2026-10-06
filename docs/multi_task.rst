@@ -430,6 +430,39 @@ modality (often ATAC). A single global threshold would be dominated
 by the larger modality and would silently let the smaller modality's
 outliers through.
 
+With per-group peak masks (below), each group's threshold is taken
+over its own peaks alone, and an outlier leaves only that group's set.
+
+Per-group peak masks
+~~~~~~~~~~~~~~~~~~~~
+
+Groups trained together usually share one set of training regions,
+such as the union of every group's peaks, so each group also sees the
+regions where it has no peak. By default every group is scored on
+every region. ``loci_masks`` gives one tab-separated file per ``loci``
+file, row-aligned with it, with a header row and one 0/1 column per
+signal group:
+
+.. code-block:: text
+
+   atac	ctcf
+   1	0
+   1	1
+   0	1
+
+With masks, each group's profile and count losses are means over its
+own peaks and over the negatives, each negative weighted by the
+group's share of the peaks, so that every group weighs
+``negative_ratio`` negatives per own peak, as a model of that group
+alone would. Regions no group claims are dropped. Validation scores
+each group on its own validation peaks, which also choose the
+checkpoint, and on those plus every validation negative for the
+measures that use negatives. In Python, pass the masks to
+:func:`~cherimoya.io.PeakGenerator` as ``peak_masks`` and the
+validation masks to :func:`~cherimoya.training.fit` as
+``masks_valid``; :func:`~cherimoya.io.interleave_masks` puts masks in
+the order ``extract_loci`` takes the loci.
+
 Validation metrics and the two training logs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

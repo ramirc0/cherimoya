@@ -235,6 +235,14 @@ chromosomes that chose the checkpoint; the test numbers do not.
    * - ``loci``
      - required
      - BED file(s) of peaks.
+   * - ``loci_masks``
+     - ``null``
+     - One tab-separated file per ``loci`` file, row-aligned with it: a
+       header row, then one 0/1 column per signal group marking the
+       groups whose own peaks the row holds. Each group's losses and
+       validation measures then use its own peaks and its share of the
+       negatives (see :doc:`multi_task`). ``null`` scores every group on
+       every example.
    * - ``negatives``
      - required
      - BED file(s) of GC-matched negatives. Those on the validation

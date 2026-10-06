@@ -62,6 +62,7 @@ Explicitly:
   :class:`~cherimoya.wrappers.ExpectedCountsWrapper`.
 * **Public** module-level symbols:
   :func:`~cherimoya.io.PeakGenerator`,
+  :func:`~cherimoya.io.interleave_masks`,
   :class:`~cherimoya.io.PeakNegativeSampler`,
   :class:`~cherimoya.io.ShardedEpochSampler`,
   :func:`~cherimoya.training.fit`,

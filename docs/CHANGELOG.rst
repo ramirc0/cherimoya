@@ -72,6 +72,17 @@ Configuration (**breaking**)
 
 * ``hydra-core>=1.3.7,<1.4`` is a new dependency.
 
+Training
+~~~~~~~~
+
+* **Per-group peak masks score each group on its own peaks.** ``fit``
+  takes ``loci_masks``, one 0/1 column per signal group for every row of
+  ``loci``. With them, each group's profile and count losses are means
+  over its own peaks and the negatives, each negative weighted by the
+  group's share of the peaks. Validation, the checkpoint criterion and
+  the outlier threshold use each group's own peaks too. Without masks,
+  training is unchanged.
+
 Bug fixes
 ~~~~~~~~~
 
