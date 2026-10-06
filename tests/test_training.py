@@ -53,7 +53,7 @@ def _model(signal_groups, n_controls=0):
 		random_state=0)
 
 
-def _data(signal_groups, counts, n_controls=0):
+def _data(signal_groups, counts, n_controls=0, peak_masks=None):
 	"""A training sampler and a validation set for a tiny model.
 
 	12 peaks at negative ratio 0.5 give 18 examples per epoch: four full
@@ -99,7 +99,8 @@ def _data(signal_groups, counts, n_controls=0):
 		negative_controls=negative_controls, in_window=L - 4,
 		out_window=out_L - 4, max_jitter=2, negative_ratio=0.5,
 		reverse_complement=True, random_state=0,
-		signal_perm=channel_permutation_from_groups(signal_groups))
+		signal_perm=channel_permutation_from_groups(signal_groups),
+		peak_masks=peak_masks)
 
 	return sampler, X_valid, y_valid, X_ctl_valid
 
@@ -874,3 +875,130 @@ def test_optimizer_routing_is_stable_without_control_tracks():
 			assert names[name] == ['muon'], f"{name} -> {names[name]}"
 		elif name.endswith('conv_weight'):
 			assert names[name] == ['adam'], f"{name} -> {names[name]}"
+
+
+# --------- Per-group masks -------------------------------------------------
+
+def _log(path):
+	return pandas.read_csv(path, sep="\t", float_precision='round_trip')
+
+
+@pytest.mark.parametrize("signal_groups,loss_weights", [([1, 2], None),
+	([1, 2], (1.333, 0.274))])
+def test_masks_that_keep_everything_train_bitwise_as_none(tmp_path,
+	signal_groups, loss_weights):
+	"""Masks of all ones weight every example by one, so training, the
+	weights and the log are exactly those of training without masks."""
+
+	models = {}
+	for name, peak_masks in [("plain", None),
+		("masked", numpy.ones((12, len(signal_groups)), dtype=bool))]:
+		data, X_valid, y_valid, _ = _data(signal_groups, 4,
+			peak_masks=peak_masks)
+		model = _model(signal_groups)
+		model.name = str(tmp_path / name)
+		fit(model, data, X_valid, y_valid, max_epochs=2, accelerator='cpu',
+			batch_size=BATCH_SIZE, num_workers=0, loss_weights=loss_weights,
+			**LR)
+		models[name] = model
+
+	for (key, p), q in zip(models["plain"].state_dict().items(),
+			models["masked"].state_dict().values()):
+		assert torch.equal(p, q), key
+	plain, masked = _log(tmp_path / "plain.log"), _log(tmp_path / "masked.log")
+	columns = [c for c in plain.columns if "Time" not in c]
+	pandas.testing.assert_frame_equal(plain[columns], masked[columns])
+
+
+def test_masks_change_training_only_through_the_groups_they_cut(tmp_path):
+	"""A mask that cuts the second group's peaks changes the model; one
+	that keeps everything does not (above)."""
+
+	peak_masks = numpy.ones((12, 2), dtype=bool)
+	peak_masks[::2, 1] = False
+	data, X_valid, y_valid, _ = _data([1, 2], 4, peak_masks=peak_masks)
+	plain, _, _, _ = _data([1, 2], 4)
+
+	states = []
+	for name, sampler in [("plain", plain), ("masked", data)]:
+		model = _model([1, 2])
+		model.name = str(tmp_path / name)
+		fit(model, sampler, X_valid, y_valid, max_epochs=1,
+			accelerator='cpu', batch_size=BATCH_SIZE, num_workers=0, **LR)
+		states.append(model.state_dict())
+	assert any(not torch.equal(p, q) for p, q in zip(states[0].values(),
+		states[1].values()))
+
+
+def test_masked_validation_scores_each_group_on_its_own_examples(tmp_path):
+	"""Each group's count Pearson and AUROC in the detailed log are those of
+	its own peaks, and its own peaks plus the negatives it scores."""
+
+	from sklearn.metrics import roc_auc_score
+
+	signal_groups = [1, 2]
+	training_data, X_valid, y_valid, _ = _data(signal_groups, 4)
+	g = torch.Generator().manual_seed(1)
+	X_neg = X_valid[torch.randperm(len(X_valid), generator=g)[:5]].flip(-1)
+	y_neg = torch.randint(0, 2, (5, *y_valid.shape[1:]), generator=g).float()
+	X_all, y_all = torch.cat([X_valid, X_neg]), torch.cat([y_valid, y_neg])
+	labels = torch.cat([torch.ones(7), torch.zeros(5)])
+	masks = torch.ones(12, 2, dtype=torch.bool)
+	masks[[0, 2, 3], 0] = False
+	masks[[1, 5], 1] = False
+	masks[[8, 9], 1] = False
+
+	model = _model(signal_groups)
+	model.name = str(tmp_path / "masked")
+	fit(model, training_data, X_all, y_all, max_epochs=2, accelerator='cpu',
+		batch_size=BATCH_SIZE, num_workers=0, labels_valid=labels,
+		masks_valid=masks)
+
+	model = Cherimoya.load(str(tmp_path / "masked.final.torch"), device='cpu')
+	_, y_hat_logcounts = predict(model, X_all, batch_size=BATCH_SIZE,
+		device='cpu')
+	observed = torch.stack([y_all[:, :1].sum(dim=(1, 2)),
+		y_all[:, 1:].sum(dim=(1, 2))], dim=1)
+	target = torch.log(observed + 1)
+
+	detailed = _log(tmp_path / "masked.detailed.log").iloc[-1]
+	for i in range(2):
+		own = (labels == 1) & masks[:, i]
+		expected = numpy.corrcoef(target[own, i], y_hat_logcounts[own, i])
+		assert numpy.isclose(detailed["CountPearson_g{}".format(i)],
+			expected[0, 1], rtol=1e-4, atol=1e-5)
+		scored = masks[:, i]
+		assert numpy.isclose(detailed["AUROC_g{}".format(i)],
+			roc_auc_score(labels[scored], y_hat_logcounts[scored, i]),
+			rtol=1e-4, atol=1e-5)
+
+
+def test_masks_valid_must_have_a_row_per_example_and_a_column_per_group():
+	training_data, X_valid, y_valid, _ = _data([1, 2], 4)
+	with pytest.raises(ValueError, match="masks_valid"):
+		CherimoyaModule(_model([1, 2]), training_data, X_valid, y_valid,
+			masks_valid=torch.ones(len(X_valid), 3, dtype=torch.bool))
+
+
+@pytest.mark.parametrize("world_size", [1, 2])
+def test_mask_weights_average_each_group_over_its_global_examples(world_size):
+	"""Weights are a group's mask over its share of the global batch: a
+	weighted mean over one device's examples, averaged over the devices,
+	is the mean over the group's own examples. A group with none gets
+	weights of zero."""
+
+	training_data, X_valid, y_valid, _ = _data([1, 1, 1], 4)
+	module = CherimoyaModule(_model([1, 1, 1]), training_data, X_valid,
+		y_valid)
+	module._trainer = _fake_trainer(world_size)
+	mask = torch.tensor([[1, 1, 0], [1, 0, 0], [1, 0, 0], [0, 0, 0]],
+		dtype=torch.bool)
+	other = torch.tensor([0.5, 0.0, 0.0])
+	module.all_gather = lambda share: torch.stack([share, other])
+
+	assert module._weights(torch.tensor([1, 0, 1, 1])) is None
+	share = (mask.float().mean(dim=0) if world_size == 1
+		else (mask.float().mean(dim=0) + other) / 2)
+	expected = mask / torch.where(share > 0, share, 1.0)
+	assert torch.equal(module._weights(mask), expected)
+	assert (module._weights(mask)[:, 2] == 0).all()
