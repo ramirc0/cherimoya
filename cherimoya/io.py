@@ -244,13 +244,12 @@ class PeakNegativeSampler(torch.utils.data.Dataset):
 	peak_masks: numpy.ndarray or None, shape=(n_peaks, n_groups), optional
 		Which signal groups score each peak: True where the peak belongs
 		to that group's own set. When given, every example ends in its
-		per-group bool mask instead of the peak flag. A peak's mask is its
-		row. Each negative draw is scored by each group independently with
-		probability that group's share of the peaks, so every group sees
+		per-group loss weights, a float32 tensor, instead of the peak
+		flag: a peak's mask row as 0 and 1, and for a negative each
+		group's share of the peaks. Each group then weighs
 		``negative_ratio`` negatives per own peak, as a model trained on
-		its peaks alone would. The draws come after all the others, so
-		the examples themselves are those drawn without masks. Default is
-		None.
+		its peaks alone would. The examples drawn are those drawn without
+		masks. Default is None.
 	"""
 
 	def __init__(self, peak_sequences, peak_signals, negative_sequences,
@@ -281,11 +280,13 @@ class PeakNegativeSampler(torch.utils.data.Dataset):
 
 		self.peak_masks = (None if peak_masks is None
 			else numpy.asarray(peak_masks, dtype=bool))
-		if self.peak_masks is not None and (self.peak_masks.ndim != 2
-				or len(self.peak_masks) != self.n_peaks):
-			raise ValueError("peak_masks must have shape (n_peaks, n_groups) "
-				"with n_peaks={}, got {}".format(self.n_peaks,
-				self.peak_masks.shape))
+		if self.peak_masks is not None:
+			if self.peak_masks.ndim != 2 or len(self.peak_masks) != self.n_peaks:
+				raise ValueError("peak_masks must have shape (n_peaks, n_groups) "
+					"with n_peaks={}, got {}".format(self.n_peaks,
+					self.peak_masks.shape))
+			self.negative_weights = self.peak_masks.mean(axis=0).astype(
+				numpy.float32)
 
 		if peak_controls is not None:
 			self.peak_controls = peak_controls.numpy(force=True)
@@ -387,13 +388,6 @@ class PeakNegativeSampler(torch.utils.data.Dataset):
 		else:
 			self._rc_flags = numpy.zeros(n, dtype=bool)
 
-		if self.peak_masks is not None:
-			masks = numpy.empty((n, self.peak_masks.shape[1]), dtype=bool)
-			masks[labels] = self.peak_masks[self.peak_ordering]
-			masks[~labels] = (rng.random_sample(((~labels).sum(),
-				self.peak_masks.shape[1])) < self.peak_masks.mean(axis=0))
-			self._masks = masks
-
 	def __getitem__(self, idx):
 		# An `(epoch, idx)` pair, as `ShardedEpochSampler` yields, names
 		# its epoch outright. A bare index falls back to spotting the
@@ -443,8 +437,12 @@ class PeakNegativeSampler(torch.utils.data.Dataset):
 					Xi_ctl = Xi_ctl[self.control_perm]
 				Xi_ctl = torch.flip(Xi_ctl, [-1])
 
-		label = (int(is_peak) if self.peak_masks is None
-			else torch.from_numpy(self._masks[idx]))
+		if self.peak_masks is None:
+			label = int(is_peak)
+		elif is_peak:
+			label = torch.from_numpy(self.peak_masks[src].astype(numpy.float32))
+		else:
+			label = torch.from_numpy(self.negative_weights)
 		if Xi_ctl is not None:
 			return Xi, Xi_ctl, yi, label
 		return Xi, yi, label
@@ -719,9 +717,12 @@ def PeakGenerator(peaks, negatives, sequences, signals, controls=None,
 	peak_masks: str or numpy.ndarray or list/tuple of such, or None, optional
 		One per entry of `peaks`, row-aligned with it: which signal groups
 		each peak belongs to, as :func:`interleave_masks` reads them. The
-		masks follow the peaks through the chromosome, exclusion and
-		outlier filters into the sampler's `peak_masks`. If None, every
-		group scores every example. Default is None.
+		masks follow the peaks through the chromosome and exclusion
+		filters into the sampler's `peak_masks`. Each group's outlier
+		threshold is then taken over its own peaks, and an outlier is
+		dropped from that group's set alone; peaks left in no group's set
+		are dropped. If None, every group scores every example. Default
+		is None.
 
 
 	Returns
@@ -795,13 +796,33 @@ def PeakGenerator(peaks, negatives, sequences, signals, controls=None,
 	# group is dropped. For the common single-group case this reduces
 	# exactly to the legacy behavior.
 	peak_signals = X_peaks[1]
+	if peak_masks is not None:
+		peak_masks = interleave_masks(peaks, peak_masks, chroms)
+		if peak_masks.shape[1] != len(signal_groups):
+			raise ValueError("peak_masks has {} columns but there are {} "
+				"signal groups".format(peak_masks.shape[1], len(signal_groups)))
+		peak_masks = peak_masks[X_peaks[-1].numpy()]
+
+	# With masks, a group's own peaks set its threshold, as they would in a
+	# model of that group alone; over every peak, a group that owns few of
+	# them would lose its strongest.
 	outlier_idxs = torch.zeros(peak_signals.shape[0], dtype=torch.bool)
 	offset = 0
-	for g in (signal_groups if signal_groups else [peak_signals.shape[1]]):
+	for i, g in enumerate(signal_groups if signal_groups
+			else [peak_signals.shape[1]]):
 		group_counts = peak_signals[:, offset:offset+g].sum(dim=(1, 2))
-		group_threshold = torch.quantile(group_counts, 0.99) * 1.2
-		outlier_idxs |= group_counts > group_threshold
+		if peak_masks is None:
+			group_threshold = torch.quantile(group_counts, 0.99) * 1.2
+			outlier_idxs |= group_counts > group_threshold
+		elif peak_masks[:, i].any():
+			own = torch.from_numpy(peak_masks[:, i])
+			group_threshold = torch.quantile(group_counts[own], 0.99) * 1.2
+			peak_masks[:, i] &= (group_counts <= group_threshold).numpy()
 		offset += g
+
+	if peak_masks is not None:
+		outlier_idxs = torch.from_numpy(~peak_masks.any(axis=1))
+		peak_masks = peak_masks[~outlier_idxs.numpy()]
 
 	# Without negatives, empty tensors of the negatives' shapes stand in, and
 	# the sampler refuses a nonzero `negative_ratio`.
@@ -830,13 +851,6 @@ def PeakGenerator(peaks, negatives, sequences, signals, controls=None,
 		print("Filtered Negatives: {}".format(n_filtered_negatives))
 
 	###
-
-	if peak_masks is not None:
-		peak_masks = interleave_masks(peaks, peak_masks, chroms)
-		if peak_masks.shape[1] != len(signal_groups):
-			raise ValueError("peak_masks has {} columns but there are {} "
-				"signal groups".format(peak_masks.shape[1], len(signal_groups)))
-		peak_masks = peak_masks[X_peaks[-1].numpy()][~outlier_idxs.numpy()]
 
 	X_gen = PeakNegativeSampler(
 		peak_sequences=X_peaks[0][~outlier_idxs],
