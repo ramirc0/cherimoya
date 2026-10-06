@@ -24,6 +24,12 @@ Signal group helpers
 .. autofunction:: channel_permutation_from_groups
 
 
+Peak masks
+----------
+
+.. autofunction:: interleave_masks
+
+
 PeakNegativeSampler
 -------------------
 
