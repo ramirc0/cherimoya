@@ -16,8 +16,15 @@ from bpnetlite.losses import MNLLLoss
 from .io import _validate_signal_groups
 
 
+def _mean(loss, weights):
+	"""The mean over examples of per-example losses, weighted when `weights`
+	is given."""
+
+	return loss.mean(dim=0) if weights is None else (loss * weights).mean(dim=0)
+
+
 def _mixture_loss(y, y_hat_logits, y_hat_logcounts, labels=None,
-		signal_groups=None):
+		signal_groups=None, weights=None):
 	"""A function that takes in predictions and truth and returns the loss.
 
 	This function takes in the observed integer read counts, the predicted logits,
@@ -75,6 +82,15 @@ def _mixture_loss(y, y_hat_logits, y_hat_logcounts, labels=None,
 		``y.shape[1]``. When None, every channel is treated as its own
 		group (legacy behavior). Default is None.
 
+	weights: torch.Tensor, shape=(n, n_count_outputs), optional
+		Per-example, per-group weights. When given, each group's profile
+		and count losses are ``(loss * weights).mean(dim=0)`` over the
+		examples instead of the plain mean, so a weight of 0 leaves an
+		example out of that group's losses, and weights of
+		``n / n_kept`` on the kept examples make each loss the mean over
+		them alone. The rows `labels` drops from the profile loss are
+		dropped from `weights` too. Default is None.
+
 
 	Returns
 	-------
@@ -99,11 +115,18 @@ def _mixture_loss(y, y_hat_logits, y_hat_logcounts, labels=None,
 				"sum(signal_groups)={} does not match y.shape[1]={}"
 				.format(sum(signal_groups), y_per_track.shape[-1]))
 
+	if weights is not None and weights.shape != y_hat_logcounts.shape:
+		raise ValueError("weights has shape {} but the log counts have shape "
+			"{}".format(tuple(weights.shape), tuple(y_hat_logcounts.shape)))
+
 	# Restrict the profile loss to peak examples when labels are given;
 	# the count loss always runs on the full batch (below).
+	weights_prof = weights
 	if labels is not None:
 		y_prof = y[labels == 1]
 		logits_prof = y_hat_logits[labels == 1]
+		if weights is not None:
+			weights_prof = weights[labels == 1]
 	else:
 		y_prof = y
 		logits_prof = y_hat_logits
@@ -126,16 +149,17 @@ def _mixture_loss(y, y_hat_logits, y_hat_logcounts, labels=None,
 
 	if all(g == 1 for g in groups):
 		log_probs = torch.nn.functional.log_softmax(logits_prof, dim=-1)
-		profile_loss = MNLLLoss(log_probs, y_prof).mean(dim=0)
+		profile_loss = _mean(MNLLLoss(log_probs, y_prof), weights_prof)
 	else:
 		n = logits_prof.shape[0]
 		per_group = []
 		offset = 0
-		for g in groups:
+		for i, g in enumerate(groups):
 			logits_g = logits_prof[:, offset:offset+g].reshape(n, -1)
 			y_g = y_prof[:, offset:offset+g].reshape(n, -1)
 			log_probs_g = torch.nn.functional.log_softmax(logits_g, dim=-1)
-			per_group.append(MNLLLoss(log_probs_g, y_g).mean(dim=0))
+			per_group.append(_mean(MNLLLoss(log_probs_g, y_g),
+				None if weights_prof is None else weights_prof[:, i]))
 			offset += g
 		profile_loss = torch.stack(per_group)
 
@@ -156,6 +180,6 @@ def _mixture_loss(y, y_hat_logits, y_hat_logcounts, labels=None,
 
 	# Count loss: per-example per-group squared error, then mean over examples.
 	count_sq_err = (torch.log(y_per_track + 1) - y_hat_logcounts) ** 2
-	count_loss = count_sq_err.mean(dim=0)
+	count_loss = _mean(count_sq_err, weights)
 
 	return profile_loss, count_loss

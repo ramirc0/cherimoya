@@ -853,6 +853,25 @@ def test_group_depths_is_floored_at_one():
 	assert torch.allclose(depths, torch.tensor([1.0, 20.0]))
 
 
+def test_group_depths_with_weights_average_over_each_groups_examples():
+	"""Weights that leave an example out of a group's loss leave it out of
+	that group's depth too: a mask over n / n_kept gives the mean over the
+	kept examples."""
+
+	from cherimoya.cherimoya import _group_depths
+
+	y = torch.zeros(4, 2, 5)
+	y[:, 0, :] = torch.tensor([1.0, 2.0, 3.0, 4.0])[:, None]
+	y[:, 1, :] = 10.0
+	mask = torch.tensor([[1, 0], [1, 1], [0, 1], [0, 0]], dtype=torch.bool)
+	weights = mask / mask.float().mean(dim=0)
+
+	depths = _group_depths(y, [1, 1], weights=weights)
+	assert torch.allclose(depths, torch.tensor([7.5, 50.0]))
+	assert torch.equal(_group_depths(y, [1, 1], weights=torch.ones(4, 2)),
+		_group_depths(y, [1, 1]))
+
+
 def test_group_depths_differs_from_a_pooled_mean():
 	"""The point of the per-group form: a pooled divisor rescales every
 	group by the same number and so leaves their weights relative to each
