@@ -9,8 +9,8 @@ import os
 # and `idx_filename` that `seqlets` reads.
 INPUT_KEYS = {
 	"negatives": ("peaks", "fasta", "bigwig"),
-	"fit": ("sequences", "loci", "negatives", "signals", "controls",
-		"exclusion_lists"),
+	"fit": ("sequences", "loci", "loci_masks", "negatives", "signals",
+		"controls", "exclusion_lists"),
 	"evaluate": ("model", "sequences", "loci", "negatives", "signals",
 		"controls", "exclusion_lists"),
 	"attribute": ("model", "sequences", "loci", "exclusion_lists"),

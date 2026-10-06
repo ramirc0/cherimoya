@@ -110,6 +110,7 @@ class FitConfig:
 	name: Optional[str] = MISSING
 	sequences: str = MISSING
 	loci: Any = MISSING
+	loci_masks: Any = None
 	negatives: Any = MISSING
 	signals: Any = MISSING
 	controls: Any = None
