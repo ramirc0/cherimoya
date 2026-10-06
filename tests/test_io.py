@@ -1169,3 +1169,165 @@ def test_sampler_allows_no_negatives_when_the_ratio_is_zero():
 		negative_ratio=0, in_window=20, out_window=10, random_state=0)
 
 	assert len(sampler) == 4
+
+
+# --------- Per-group peak masks --------------------------------------------
+
+def _peak_index(X):
+	"""The source peak of a drawn example, from the channel-0 flag
+	`_make_sampler` stamps on it, or None for a negative."""
+
+	flag = int(X[0, 0])
+	return flag - 1 if flag > 0 else None
+
+
+def test_masks_replace_the_peak_flag_and_follow_the_source_peak():
+	peak_masks = numpy.array([[i % 2 == 0, i % 3 == 0] for i in range(8)])
+	sampler = _make_sampler(n_peaks=8, n_negs=8, negative_ratio=0.5,
+		peak_masks=peak_masks, reverse_complement=True)
+	for epoch in range(3):
+		for idx in range(len(sampler)):
+			X, y, mask = sampler[(epoch, idx)]
+			assert mask.dtype == torch.bool and mask.shape == (2,)
+			peak = _peak_index(X if not sampler._rc_flags[idx]
+				else torch.flip(X, [0, 1]))
+			if peak is not None:
+				assert mask.tolist() == peak_masks[peak].tolist()
+
+
+def test_masks_score_negatives_at_each_groups_peak_share():
+	n_peaks = 200
+	peak_masks = numpy.zeros((n_peaks, 3), dtype=bool)
+	peak_masks[:, 0] = True
+	peak_masks[:50, 1] = True
+	sampler = _make_sampler(n_peaks=n_peaks, n_negs=50, negative_ratio=1.0,
+		max_jitter=0, peak_masks=peak_masks)
+
+	drawn = []
+	for epoch in range(20):
+		for idx in range(len(sampler)):
+			X, _, mask = sampler[(epoch, idx)]
+			if _peak_index(X) is None:
+				drawn.append(mask.numpy())
+	rate = numpy.mean(drawn, axis=0)
+	assert rate[0] == 1 and rate[2] == 0
+	assert abs(rate[1] - 0.25) < 0.02
+
+
+def test_masks_leave_every_other_draw_unchanged():
+	peak_masks = numpy.ones((8, 2), dtype=bool)
+	plain = _make_sampler(negative_ratio=0.5, reverse_complement=True)
+	masked = _make_sampler(negative_ratio=0.5, reverse_complement=True,
+		peak_masks=peak_masks)
+	for epoch in range(3):
+		for idx in range(len(plain)):
+			(X, y, label), (X_m, y_m, mask) = (plain[(epoch, idx)],
+				masked[(epoch, idx)])
+			assert torch.equal(X, X_m) and torch.equal(y, y_m)
+			assert mask.all()
+
+
+def test_masks_with_controls_keep_the_tuple_length():
+	sampler = _make_sampler(controls=True,
+		peak_masks=numpy.ones((8, 1), dtype=bool))
+	X, X_ctl, y, mask = sampler[0]
+	assert mask.shape == (1,)
+
+
+def test_num_workers_does_not_change_the_masks():
+	peak_masks = numpy.array([[i % 2 == 0, i % 3 == 0] for i in range(8)])
+
+	def batches(num_workers):
+		sampler = _make_sampler(negative_ratio=1.0, peak_masks=peak_masks)
+		loader = torch.utils.data.DataLoader(sampler, batch_size=4,
+			num_workers=num_workers, persistent_workers=num_workers > 0)
+		return [batch[-1] for _ in range(2) for batch in loader]
+
+	for a, b in zip(batches(0), batches(2)):
+		assert torch.equal(a, b)
+
+
+def test_masks_must_have_one_row_per_peak():
+	with pytest.raises(ValueError, match="peak_masks"):
+		_make_sampler(n_peaks=8, peak_masks=numpy.ones((7, 2), dtype=bool))
+
+
+def _write_loci_and_masks(directory, name, rows):
+	"""A BED file of (chrom, start) rows and its mask TSV, whose two
+	columns are functions of the start so a row's mask can be checked
+	wherever it ends up."""
+
+	bed = directory / "{}.bed".format(name)
+	bed.write_text("".join("{}\t{}\t{}\n".format(c, s, s + 10)
+		for c, s in rows))
+	tsv = directory / "{}.mask.tsv".format(name)
+	tsv.write_text("a\tb\n" + "".join("{}\t{}\n".format(*_mask_of(s))
+		for _, s in rows))
+	return str(bed), str(tsv)
+
+
+def _mask_of(start):
+	return int(start % 20 == 0), int(start % 30 == 0)
+
+
+def _filtering_extract_loci(loci, chroms, signals, in_window, out_window,
+		max_jitter, return_mask, outlier_start=None, **kwargs):
+	"""Stands in for `extract_loci` on real BED files: it takes the loci in
+	tangermeme's order, drops those whose start is a multiple of 70, as
+	the exclusion and chromosome-end checks drop loci, stamps each kept
+	start into the sequence, and can make one locus a count outlier."""
+
+	from tangermeme.io import _interleave_loci
+
+	df = _interleave_loci(loci, chroms)
+	kept = torch.tensor((df["start"] % 70 != 0).values)
+	starts = torch.tensor(df["start"].values)[kept]
+	X = torch.zeros(len(starts), 4, in_window + 2 * max_jitter)
+	X[:, 0, 0] = starts.float()
+	y = torch.ones(len(starts), len(signals), out_window + 2 * max_jitter)
+	if outlier_start is not None:
+		y[starts == outlier_start] *= 10_000
+	return X, y, kept
+
+
+def test_peak_generator_aligns_masks_with_the_loci_it_keeps(tmp_path):
+	first = _write_loci_and_masks(tmp_path, "first", [("chr1", s)
+		for s in range(0, 600, 10)] + [("chr2", 5)])
+	second = _write_loci_and_masks(tmp_path, "second", [("chr1", s)
+		for s in range(1000, 1300, 10)])
+
+	def fake(**kwargs):
+		return _filtering_extract_loci(outlier_start=120, **kwargs)
+
+	with _patch_extract_loci(fake):
+		loader = PeakGenerator(**_minimal_peakgen_kwargs(
+			peaks=[first[0], second[0]], peak_masks=[first[1], second[1]],
+			negatives=None, chroms=["chr1"], signals=["a.bw", "b.bw"]))
+
+	sampler = loader.dataset
+	starts = sampler.peak_sequences[:, 0, 0].astype(int)
+	assert 120 not in starts and 140 not in starts and 5 not in starts
+	assert len(starts) == sampler.n_peaks == len(sampler.peak_masks)
+	assert sampler.peak_masks.tolist() == [list(map(bool, _mask_of(s)))
+		for s in starts]
+	# Interleaved round-robin across the two files, as the loci are.
+	assert starts[:4].tolist() == [1000, 10, 1010, 20]
+
+
+def test_peak_generator_rejects_masks_of_the_wrong_width(tmp_path):
+	bed, tsv = _write_loci_and_masks(tmp_path, "p", [("chr1", s)
+		for s in range(10, 100, 10)])
+	with _patch_extract_loci(_filtering_extract_loci):
+		with pytest.raises(ValueError, match="signal groups"):
+			PeakGenerator(**_minimal_peakgen_kwargs(peaks=bed,
+				peak_masks=tsv, negatives=None, signals=["a.bw"]))
+
+
+def test_peak_generator_rejects_masks_with_the_wrong_rows(tmp_path):
+	bed, _ = _write_loci_and_masks(tmp_path, "p", [("chr1", s)
+		for s in range(10, 100, 10)])
+	_, tsv = _write_loci_and_masks(tmp_path, "q", [("chr1", 10)])
+	with _patch_extract_loci(_filtering_extract_loci):
+		with pytest.raises(ValueError, match="rows"):
+			PeakGenerator(**_minimal_peakgen_kwargs(peaks=bed,
+				peak_masks=tsv, negatives=None, signals=["a.bw", "b.bw"]))

@@ -3,6 +3,7 @@
 # Code adapted from Alex Tseng, Avanti Shrikumar, and Ziga Avsec
 
 import numpy
+import pandas
 import torch
 
 from tangermeme.io import extract_loci
@@ -239,13 +240,24 @@ class PeakNegativeSampler(torch.utils.data.Dataset):
 	control_perm: torch.LongTensor or None, optional
 		Same as ``signal_perm`` but applied to the control tracks. Default
 		is None.
+
+	peak_masks: numpy.ndarray or None, shape=(n_peaks, n_groups), optional
+		Which signal groups score each peak: True where the peak belongs
+		to that group's own set. When given, every example ends in its
+		per-group bool mask instead of the peak flag. A peak's mask is its
+		row. Each negative draw is scored by each group independently with
+		probability that group's share of the peaks, so every group sees
+		``negative_ratio`` negatives per own peak, as a model trained on
+		its peaks alone would. The draws come after all the others, so
+		the examples themselves are those drawn without masks. Default is
+		None.
 	"""
 
 	def __init__(self, peak_sequences, peak_signals, negative_sequences,
 		negative_signals, peak_controls=None, negative_controls=None,
 		negative_ratio=0.1, in_window=2114, out_window=1000, max_jitter=0,
 		reverse_complement=False, shuffle=True, random_state=None,
-		signal_perm=None, control_perm=None):
+		signal_perm=None, control_perm=None, peak_masks=None):
 		if max_jitter < 0:
 			raise ValueError("max_jitter must be non-negative, got {}"
 				.format(max_jitter))
@@ -266,6 +278,14 @@ class PeakNegativeSampler(torch.utils.data.Dataset):
 				"negative_ratio is {} but no negative sequences were "
 				"given; pass negatives or set negative_ratio to 0"
 				.format(negative_ratio))
+
+		self.peak_masks = (None if peak_masks is None
+			else numpy.asarray(peak_masks, dtype=bool))
+		if self.peak_masks is not None and (self.peak_masks.ndim != 2
+				or len(self.peak_masks) != self.n_peaks):
+			raise ValueError("peak_masks must have shape (n_peaks, n_groups) "
+				"with n_peaks={}, got {}".format(self.n_peaks,
+				self.peak_masks.shape))
 
 		if peak_controls is not None:
 			self.peak_controls = peak_controls.numpy(force=True)
@@ -367,6 +387,13 @@ class PeakNegativeSampler(torch.utils.data.Dataset):
 		else:
 			self._rc_flags = numpy.zeros(n, dtype=bool)
 
+		if self.peak_masks is not None:
+			masks = numpy.empty((n, self.peak_masks.shape[1]), dtype=bool)
+			masks[labels] = self.peak_masks[self.peak_ordering]
+			masks[~labels] = (rng.random_sample(((~labels).sum(),
+				self.peak_masks.shape[1])) < self.peak_masks.mean(axis=0))
+			self._masks = masks
+
 	def __getitem__(self, idx):
 		# An `(epoch, idx)` pair, as `ShardedEpochSampler` yields, names
 		# its epoch outright. A bare index falls back to spotting the
@@ -416,9 +443,11 @@ class PeakNegativeSampler(torch.utils.data.Dataset):
 					Xi_ctl = Xi_ctl[self.control_perm]
 				Xi_ctl = torch.flip(Xi_ctl, [-1])
 
+		label = (int(is_peak) if self.peak_masks is None
+			else torch.from_numpy(self._masks[idx]))
 		if Xi_ctl is not None:
-			return Xi, Xi_ctl, yi, int(is_peak)
-		return Xi, yi, int(is_peak)
+			return Xi, Xi_ctl, yi, label
+		return Xi, yi, label
 
 
 
@@ -480,12 +509,69 @@ class ShardedEpochSampler(torch.utils.data.Sampler):
 				yield epoch, idx
 
 
+def interleave_masks(loci, masks, chroms=None):
+	"""Per-locus masks in the order `extract_loci` takes the loci.
+
+	Each loci file has its own mask, row-aligned with it. The rows are kept
+	and interleaved as tangermeme's `_interleave_loci` keeps and interleaves
+	the loci: those on `chroms`, then round-robin across the files. The
+	result lines up with the kept mask `extract_loci` returns.
+
+
+	Parameters
+	----------
+	loci: str or pandas.DataFrame or list/tuple of such
+		The loci, as given to `extract_loci`.
+
+	masks: str or numpy.ndarray or list/tuple of such
+		One per entry of `loci`: a tab-separated file with a header row and
+		one 0/1 column per signal group, or a bool array of shape
+		(n_loci, n_groups).
+
+	chroms: list or None, optional
+		The chromosomes the loci are restricted to. If None, every row is
+		kept. Default is None.
+
+
+	Returns
+	-------
+	masks: numpy.ndarray, shape=(n, n_groups)
+		The interleaved bool masks.
+	"""
+
+	if isinstance(loci, (str, pandas.DataFrame)):
+		loci, masks = [loci], [masks]
+	if isinstance(masks, (str, numpy.ndarray)) or len(masks) != len(loci):
+		raise ValueError("Give one mask per loci file; got {} loci files"
+			.format(len(loci)))
+
+	keys, rows = [], []
+	for i, (locus, mask) in enumerate(zip(loci, masks)):
+		if isinstance(mask, str):
+			mask = pandas.read_csv(mask, sep='\t')
+		mask = numpy.asarray(mask, dtype=bool)
+
+		if isinstance(locus, str):
+			locus = pandas.read_csv(locus, sep='\t', usecols=[0], header=None)
+		chrom = locus.iloc[:, 0].astype(str).to_numpy()
+		if len(mask) != len(chrom):
+			raise ValueError("Mask {} has {} rows but its loci have {}".format(
+				i, len(mask), len(chrom)))
+
+		if chroms is not None:
+			mask = mask[numpy.isin(chrom, [str(c) for c in chroms])]
+		keys.append(numpy.arange(len(mask)) * len(loci) + i)
+		rows.append(mask)
+
+	return numpy.concatenate(rows)[numpy.argsort(numpy.concatenate(keys))]
+
+
 def PeakGenerator(peaks, negatives, sequences, signals, controls=None,
 	chroms=None, in_window=2114, out_window=1000, max_jitter=500,
 	negative_ratio=0.25, reverse_complement=True, shuffle=True, min_counts=None,
 	max_counts=None, summits=False, exclusion_lists=None, random_state=None,
 	pin_memory=True, num_workers=1, batch_size=64, verbose=False,
-	signal_groups=None, control_groups=None):
+	signal_groups=None, control_groups=None, peak_masks=None):
 	"""This is a constructor function that handles all IO.
 
 	This function will extract signal from all signal and control files,
@@ -630,6 +716,13 @@ def PeakGenerator(peaks, negatives, sequences, signals, controls=None,
 	control_groups: list of int or None, optional
 		Same as ``signal_groups`` but for ``controls``. Default is None.
 
+	peak_masks: str or numpy.ndarray or list/tuple of such, or None, optional
+		One per entry of `peaks`, row-aligned with it: which signal groups
+		each peak belongs to, as :func:`interleave_masks` reads them. The
+		masks follow the peaks through the chromosome, exclusion and
+		outlier filters into the sampler's `peak_masks`. If None, every
+		group scores every example. Default is None.
+
 
 	Returns
 	-------
@@ -738,6 +831,13 @@ def PeakGenerator(peaks, negatives, sequences, signals, controls=None,
 
 	###
 
+	if peak_masks is not None:
+		peak_masks = interleave_masks(peaks, peak_masks, chroms)
+		if peak_masks.shape[1] != len(signal_groups):
+			raise ValueError("peak_masks has {} columns but there are {} "
+				"signal groups".format(peak_masks.shape[1], len(signal_groups)))
+		peak_masks = peak_masks[X_peaks[-1].numpy()][~outlier_idxs.numpy()]
+
 	X_gen = PeakNegativeSampler(
 		peak_sequences=X_peaks[0][~outlier_idxs],
 		peak_signals=X_peaks[1][~outlier_idxs],
@@ -754,6 +854,7 @@ def PeakGenerator(peaks, negatives, sequences, signals, controls=None,
 		random_state=random_state,
 		signal_perm=signal_perm,
 		control_perm=control_perm,
+		peak_masks=peak_masks,
 	)
 
 	X_gen = torch.utils.data.DataLoader(X_gen, pin_memory=pin_memory,
