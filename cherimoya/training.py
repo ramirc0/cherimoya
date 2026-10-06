@@ -180,6 +180,34 @@ class _CherimoyaCheckpointIO(TorchCheckpointIO):
 		torch.save(checkpoint['cherimoya'], path)
 
 
+def _count_measures(observed, y_hat_logcounts, rows, measures, signal_groups):
+	"""Count measures for each group over the examples in `rows`: one
+	(n,) selection that every group shares, or one (n, n_groups) column
+	per group.
+
+	The measures need only per-channel totals, so those are passed as a
+	profile of length one.
+	"""
+
+	if rows.ndim == 1:
+		return calculate_performance_measures(
+			torch.zeros(*observed[rows].shape, 1), observed[rows].unsqueeze(-1),
+			y_hat_logcounts[rows], measures=measures,
+			signal_groups=signal_groups)
+
+	per_group, lo = [], 0
+	for i, width in enumerate(signal_groups):
+		r = rows[:, i]
+		per_group.append(calculate_performance_measures(
+			torch.zeros(int(r.sum()), width, 1),
+			observed[r, lo:lo+width].unsqueeze(-1), y_hat_logcounts[r, i:i+1],
+			measures=measures, signal_groups=[width]))
+		lo += width
+
+	return {measure: torch.cat([torch.as_tensor(group[measure]).reshape(-1)
+		for group in per_group]) for measure in measures}
+
+
 class CherimoyaModule(lightning.LightningModule):
 	"""A Lightning module that trains a Cherimoya model.
 
@@ -224,6 +252,14 @@ class CherimoyaModule(lightning.LightningModule):
 		together, and the AUROC and AUPRC of the predicted log counts
 		separating the two; without them, they are NaN. If None, every
 		example is a peak. Default is None.
+
+	masks_valid: torch.tensor or None, shape=(n, n_groups), optional
+		Which signal groups score each validation example, as the
+		training sampler's per-group masks do. Each group's measures then
+		use its own examples: the peaks it scores for the profile and
+		count measures and the checkpoint criterion, and those plus the
+		negatives it scores for the measures that use negatives. If None,
+		every group scores every example. Default is None.
 
 	batch_size: int, optional
 		The global batch size, split evenly across devices. Also the batch
@@ -270,7 +306,8 @@ class CherimoyaModule(lightning.LightningModule):
 	"""
 
 	def __init__(self, model, training_data, X_valid, y_valid,
-		X_ctl_valid=None, labels_valid=None, batch_size=64, num_workers=1,
+		X_ctl_valid=None, labels_valid=None, masks_valid=None, batch_size=64,
+		num_workers=1,
 		n_warmup_steps=0, n_decay_steps=None, muon_lr=0.025, muon_wd=0.03,
 		adam_lr=0.001, adam_wd=0.0, lw_lr=0.001, lw_wd=0.0, lw_momentum=0.9,
 		loss_weights=None, ema_decay=0.999, verbose=False):
@@ -285,6 +322,14 @@ class CherimoyaModule(lightning.LightningModule):
 		self.labels_valid = (torch.ones(len(X_valid)) if labels_valid is None
 			else labels_valid)
 		self._has_negatives = bool((self.labels_valid == 0).any())
+
+		self.masks_valid = (None if masks_valid is None
+			else torch.as_tensor(masks_valid, dtype=torch.bool))
+		if self.masks_valid is not None and self.masks_valid.shape != (
+				len(X_valid), model.n_groups):
+			raise ValueError("masks_valid must have shape ({}, {}), got {}"
+				.format(len(X_valid), model.n_groups,
+				tuple(self.masks_valid.shape)))
 
 		self.batch_size = batch_size
 		self.num_workers = num_workers
@@ -409,7 +454,23 @@ class CherimoyaModule(lightning.LightningModule):
 		if self.verbose:
 			self.print("\t".join(_LOG_COLUMNS))
 
-	def _loss(self, y, profile_loss, count_loss):
+	def _weights(self, label):
+		"""The per-group loss weights for a batch whose examples end in
+		`label`: None for peak flags. For per-group masks, each group's mask
+		divided by that group's share of the global batch, so that the
+		weighted mean over a device's examples, averaged across devices, is
+		the mean over the group's own examples alone."""
+
+		if label.ndim == 1:
+			return None
+
+		mask = label.float()
+		share = mask.mean(dim=0)
+		if self.trainer.world_size > 1:
+			share = self.all_gather(share).mean(dim=0)
+		return mask / torch.where(share > 0, share, 1.0)
+
+	def _loss(self, y, profile_loss, count_loss, weights=None):
 		"""The scalar training loss from the per-group loss terms."""
 
 		if self.loss_weights is not None:
@@ -424,7 +485,8 @@ class CherimoyaModule(lightning.LightningModule):
 			if self.trainer.world_size > 1:
 				reduce = lambda d: self.all_gather(d).mean(dim=0)
 
-			depths = _group_depths(y, self.model.signal_groups, reduce=reduce)
+			depths = _group_depths(y, self.model.signal_groups, reduce=reduce,
+				weights=weights)
 			return (w0 * profile_loss / depths).sum() + (w1 * count_loss).sum()
 
 		lw0, lw1 = self.model.lw0, self.model.lw1
@@ -449,11 +511,13 @@ class CherimoyaModule(lightning.LightningModule):
 		for optimizer in (muon, adam, lw):
 			optimizer.zero_grad()
 
+		weights = self._weights(batch[-1])
 		y_hat_logits, y_hat_logcounts = self.model(X, X_ctl)
 		profile_loss, count_loss = _mixture_loss(y, y_hat_logits.float(),
-			y_hat_logcounts.float(), signal_groups=self.model.signal_groups)
+			y_hat_logcounts.float(), signal_groups=self.model.signal_groups,
+			weights=weights)
 
-		self.manual_backward(self._loss(y, profile_loss, count_loss))
+		self.manual_backward(self._loss(y, profile_loss, count_loss, weights))
 
 		# Lightning clears the gradients before validating, so the epoch-end
 		# check on the Kendall weights reads the last step's value from here.
@@ -537,9 +601,18 @@ class CherimoyaModule(lightning.LightningModule):
 		y_hat_logcounts = torch.cat([counts for _, counts in self._valid_outputs])
 		self._valid_outputs = []
 
+		# Each group's own peaks; None when every group scores every peak.
+		own = None
+		if self.masks_valid is not None:
+			own = peaks[:, None] & self.masks_valid[start:stop]
+
 		# A rank whose block holds no peaks adds nothing to the losses.
 		profile_loss = count_loss = torch.zeros(len(signal_groups))
-		if peaks.any():
+		if own is not None:
+			profile_loss, count_loss = torch.stack(_mixture_loss(y,
+				y_hat_logits, y_hat_logcounts, signal_groups=signal_groups,
+				weights=own.float())) * len(y) / own.sum(dim=0).clamp(min=1)
+		elif peaks.any():
 			profile_loss, count_loss = _mixture_loss(y[peaks],
 				y_hat_logits[peaks], y_hat_logcounts[peaks],
 				signal_groups=signal_groups)
@@ -547,49 +620,55 @@ class CherimoyaModule(lightning.LightningModule):
 			y_hat_logcounts, measures=['profile_pearson'],
 			signal_groups=signal_groups)['profile_pearson']
 
-		# The losses are means over this rank's peaks, so the mean over the
-		# whole set weights each rank by its peak count.
-		if self.trainer.world_size > 1:
-			losses = torch.stack([profile_loss, count_loss]) * peaks.sum()
-			losses = self.all_gather(losses.to(self.device)).sum(dim=0)
-			profile_loss, count_loss = (losses / (self.labels_valid == 1).sum()
-				).cpu()
-
 		peaks = self.labels_valid == 1
-		profile_pearson = self._gather_rows(profile_pearson)[peaks]
+		scored = None
+		if own is not None:
+			scored = self.masks_valid
+			own = peaks[:, None] & scored
+
+		# The losses are means over this rank's peaks, so the mean over the
+		# whole set weights each rank by its peak count, per group when the
+		# groups score different peaks.
+		if self.trainer.world_size > 1:
+			counts = (peaks[start:stop].sum() if own is None
+				else own[start:stop].sum(dim=0))
+			losses = torch.stack([profile_loss, count_loss]) * counts
+			losses = self.all_gather(losses.to(self.device)).sum(dim=0)
+			total = peaks.sum() if own is None else own.sum(dim=0)
+			profile_loss, count_loss = (losses / total.clamp(min=1)).cpu()
+
+		profile_pearson = self._gather_rows(profile_pearson)
 		y_hat_logcounts = self._gather_rows(y_hat_logcounts)
 		observed = self._gather_rows(y.sum(dim=-1))
 
-		# The count measures need only per-channel totals, so pass those as
-		# a profile of length one.
-		count_pearson = calculate_performance_measures(
-			torch.zeros(*observed[peaks].shape, 1),
-			observed[peaks].unsqueeze(-1), y_hat_logcounts[peaks],
-			measures=['count_pearson'],
-			signal_groups=signal_groups)['count_pearson']
-
-		profile_pearson = numpy.nan_to_num(profile_pearson)
-		count_pearson = numpy.nan_to_num(count_pearson)
+		count_pearson = numpy.nan_to_num(_count_measures(observed,
+			y_hat_logcounts, peaks if own is None else own, ['count_pearson'],
+			signal_groups)['count_pearson'])
 
 		n_groups = len(signal_groups)
 		all_pearson = all_mse = auroc = auprc = numpy.full(n_groups, numpy.nan)
 		if self._has_negatives:
-			measures = calculate_performance_measures(
-				torch.zeros(*observed.shape, 1), observed.unsqueeze(-1),
-				y_hat_logcounts, measures=['count_pearson', 'count_mse'],
-				signal_groups=signal_groups)
+			everything = torch.ones(len(observed), dtype=torch.bool)
+			measures = _count_measures(observed, y_hat_logcounts,
+				everything if scored is None else scored,
+				['count_pearson', 'count_mse'], signal_groups)
 			all_pearson = numpy.nan_to_num(measures['count_pearson'])
 			all_mse = measures['count_mse'].numpy()
 			scores = y_hat_logcounts.float().numpy()
-			auroc = numpy.array([roc_auc_score(peaks, scores[:, i])
-				for i in range(n_groups)])
-			auprc = numpy.array([average_precision_score(peaks, scores[:, i])
-				for i in range(n_groups)])
+			rows = [everything if scored is None else scored[:, i]
+				for i in range(n_groups)]
+			auroc = numpy.array([roc_auc_score(peaks[rows[i]],
+				scores[rows[i], i]) for i in range(n_groups)])
+			auprc = numpy.array([average_precision_score(peaks[rows[i]],
+				scores[rows[i], i]) for i in range(n_groups)])
 
-		# Each group's profile Pearson averages over its channels and loci.
+		# Each group's profile Pearson averages over its channels and its
+		# peaks.
 		per_group_profile, lo = [], 0
-		for width in signal_groups:
-			per_group_profile.append(float(profile_pearson[:, lo:lo+width].mean()))
+		for i, width in enumerate(signal_groups):
+			rows = peaks if own is None else own[:, i]
+			chunk = numpy.nan_to_num(profile_pearson[rows])[:, lo:lo+width]
+			per_group_profile.append(float(chunk.mean()))
 			lo += width
 
 		valid_count_pearson = count_pearson.mean()
