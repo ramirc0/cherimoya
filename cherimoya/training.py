@@ -180,6 +180,16 @@ class _CherimoyaCheckpointIO(TorchCheckpointIO):
 		torch.save(checkpoint['cherimoya'], path)
 
 
+def _ranking(score, peaks, scores):
+	"""`score` of how well `scores` rank the peaks above the negatives, or
+	NaN when the examples hold only one of the two, as a group's own
+	examples may."""
+
+	if peaks.all() or not peaks.any():
+		return numpy.nan
+	return score(peaks, scores)
+
+
 def _count_measures(observed, y_hat_logcounts, rows, measures, signal_groups):
 	"""Count measures for each group over the examples in `rows`: one
 	(n,) selection that every group shares, or one (n, n_groups) column
@@ -456,19 +466,19 @@ class CherimoyaModule(lightning.LightningModule):
 
 	def _weights(self, label):
 		"""The per-group loss weights for a batch whose examples end in
-		`label`: None for peak flags. For per-group masks, each group's mask
-		divided by that group's share of the global batch, so that the
-		weighted mean over a device's examples, averaged across devices, is
-		the mean over the group's own examples alone."""
+		`label`: None unless the training data has `peak_masks`. Otherwise
+		each group's weights from the sampler divided by their mean over
+		the global batch, so that the weighted mean over a device's
+		examples, averaged across devices, is the weighted mean over the
+		group's own examples alone."""
 
-		if label.ndim == 1:
+		if getattr(self.training_data, "peak_masks", None) is None:
 			return None
 
-		mask = label.float()
-		share = mask.mean(dim=0)
+		share = label.mean(dim=0)
 		if self.trainer.world_size > 1:
 			share = self.all_gather(share).mean(dim=0)
-		return mask / torch.where(share > 0, share, 1.0)
+		return label / torch.where(share > 0, share, 1.0)
 
 	def _loss(self, y, profile_loss, count_loss, weights=None):
 		"""The scalar training loss from the per-group loss terms."""
@@ -657,10 +667,9 @@ class CherimoyaModule(lightning.LightningModule):
 			scores = y_hat_logcounts.float().numpy()
 			rows = [everything if scored is None else scored[:, i]
 				for i in range(n_groups)]
-			auroc = numpy.array([roc_auc_score(peaks[rows[i]],
+			auroc, auprc = (numpy.array([_ranking(score, peaks[rows[i]],
 				scores[rows[i], i]) for i in range(n_groups)])
-			auprc = numpy.array([average_precision_score(peaks[rows[i]],
-				scores[rows[i], i]) for i in range(n_groups)])
+				for score in (roc_auc_score, average_precision_score))
 
 		# Each group's profile Pearson averages over its channels and its
 		# peaks.
